@@ -10,7 +10,12 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.output
 *.local
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
 # dotenv environment variable files
 .env
@@ -34,3 +39,5 @@ dist-ssr
 !.vscode/
 !.vscode/settings.json
 !.vscode/extensions.json
+
+/third_party

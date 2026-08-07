@@ -1,11 +1,17 @@
 {
   "name": "admin-x",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "ready": "vp check && vp run -r test && vp run -r build",
-    "dev": "vp run website#dev"
+    "dev": "vp run -r --parallel dev",
+    "build": "vp -C tools/deploy run --no-cache deploy",
+    "build:deploy": "vp -C tools/deploy run --no-cache deploy",
+    "build:workspace": "vp run -r build",
+    "check": "vp check",
+    "start": "node .output/server/main.mjs",
+    "test": "vp run -r test",
+    "ready": "vp check && vp run -r check && vp run -r test && vp run build:workspace && vp run build"
   },
   "devDependencies": {
     "vite": "catalog:",

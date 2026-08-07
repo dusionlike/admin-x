@@ -1,0 +1,15 @@
+{
+  "name": "@admin-x/deploy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "tsx src/main.ts",
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "^4.20.3",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,15 @@
+import { Global, Module } from "@nestjs/common";
+
+import { UsersModule } from "../users/users.module.js";
+import { AuthController } from "./auth.controller.js";
+import { AuthGuard } from "./auth.guard.js";
+import { AuthService } from "./auth.service.js";
+
+@Global()
+@Module({
+  controllers: [AuthController],
+  imports: [UsersModule],
+  providers: [AuthGuard, AuthService],
+  exports: [AuthGuard, AuthService],
+})
+export class AuthModule {}

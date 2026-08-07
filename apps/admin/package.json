@@ -1,0 +1,28 @@
+{
+  "name": "admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vue-tsc --noEmit && vp build",
+    "preview": "vp preview",
+    "check": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@admin-x/shared": "workspace:*",
+    "@element-plus/icons-vue": "^2.3.2",
+    "axios": "^1.11.0",
+    "element-plus": "^2.11.5",
+    "pinia": "^3.0.3",
+    "vue": "^3.5.18",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "typescript": "^6.0.3",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vue-tsc": "^3.0.6"
+  }
+}

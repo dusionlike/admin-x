@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 
+import type { Permission } from "@admin-x/shared";
+
 import { useAuthStore } from "@/stores/auth";
 
 const router = createRouter({
@@ -30,13 +32,25 @@ const router = createRouter({
           path: "users",
           name: "users",
           component: () => import("@/views/UsersView.vue"),
-          meta: { title: "用户管理", requiresAuth: true, adminOnly: true },
+          meta: { title: "用户管理", requiresAuth: true, permission: "user:read" },
         },
         {
           path: "settings",
           name: "settings",
           component: () => import("@/views/SettingsView.vue"),
-          meta: { title: "系统设置", requiresAuth: true },
+          meta: { title: "系统设置", requiresAuth: true, permission: "system:manage" },
+        },
+        {
+          path: "security",
+          name: "security",
+          component: () => import("@/views/SecurityView.vue"),
+          meta: { title: "安全策略", requiresAuth: true, permission: "security:manage" },
+        },
+        {
+          path: "audit",
+          name: "audit",
+          component: () => import("@/views/AuditView.vue"),
+          meta: { title: "安全审计", requiresAuth: true, permission: "audit:read" },
         },
         {
           path: "profile",
@@ -74,11 +88,8 @@ router.beforeEach((to) => {
     return { name: "dashboard" };
   }
 
-  if (
-    to.meta.adminOnly &&
-    authStore.user?.role !== "admin" &&
-    authStore.user?.role !== "super-admin"
-  ) {
+  const permission = to.meta.permission as Permission | undefined;
+  if (permission && !authStore.can(permission)) {
     return { name: "dashboard" };
   }
 

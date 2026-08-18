@@ -12,6 +12,7 @@ import type {
   CreateUserRequest,
   UpdatePasswordRequest,
   UpdateProfileRequest,
+  UpdateUserRoleRequest,
   UserRole,
   UserStatus,
 } from "@admin-x/shared";
@@ -29,7 +30,9 @@ export class CreateUserDto implements CreateUserRequest {
   @MinLength(8, { message: "初始密码长度不能少于 8 位" })
   password!: string;
 
-  @IsEnum(["super-admin", "admin", "operator"], { message: "角色不合法" })
+  @IsEnum(["system-admin", "security-admin", "audit-admin", "business-admin", "operator"], {
+    message: "角色不合法",
+  })
   role!: UserRole;
 
   @IsEnum(["active", "invited", "suspended"], { message: "状态不合法" })
@@ -45,6 +48,13 @@ export class CreateUserDto implements CreateUserRequest {
 export class UpdateUserStatusDto {
   @IsEnum(["active", "invited", "suspended"], { message: "状态不合法" })
   status!: UserStatus;
+}
+
+export class UpdateUserRoleDto implements UpdateUserRoleRequest {
+  @IsEnum(["system-admin", "security-admin", "audit-admin", "business-admin", "operator"], {
+    message: "角色不合法",
+  })
+  role!: UserRole;
 }
 
 export class UpdateProfileDto implements UpdateProfileRequest {

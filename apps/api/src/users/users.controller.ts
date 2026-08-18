@@ -22,13 +22,14 @@ import type {
 } from "@admin-x/shared";
 import { createApiResponse } from "@admin-x/shared";
 
-import { AdminPrivilegeGuard } from "../auth/admin-privilege.guard.js";
 import { AuthGuard } from "../auth/auth.guard.js";
 import type { AuthenticatedRequest } from "../auth/auth.guard.js";
+import { PermissionGuard, RequirePermissions } from "../auth/permission.guard.js";
 import {
   CreateUserDto,
   UpdatePasswordDto,
   UpdateProfileDto,
+  UpdateUserRoleDto,
   UpdateUserStatusDto,
 } from "./users.dto.js";
 import { UsersService } from "./users.service.js";
@@ -39,13 +40,20 @@ export class UsersController {
   constructor(@Inject(UsersService) private readonly usersService: UsersService) {}
 
   @Get()
+  @UseGuards(AuthGuard, PermissionGuard)
+  @RequirePermissions("user:read")
   list(@Query() query: UserListQuery): ApiResponse<PageResult<UserRecord>> {
     return createApiResponse(this.usersService.list(query));
   }
 
   @Post()
-  create(@Body() body: CreateUserDto): ApiResponse<UserRecord> {
-    return createApiResponse(this.usersService.create(body as CreateUserRequest));
+  @UseGuards(AuthGuard, PermissionGuard)
+  @RequirePermissions("user:create")
+  create(
+    @Body() body: CreateUserDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<UserRecord> {
+    return createApiResponse(this.usersService.create(body as CreateUserRequest, request.user));
   }
 
   @Patch("me")
@@ -65,7 +73,8 @@ export class UsersController {
   }
 
   @Patch(":id/status")
-  @UseGuards(AuthGuard, AdminPrivilegeGuard)
+  @UseGuards(AuthGuard, PermissionGuard)
+  @RequirePermissions("user:status")
   updateStatus(
     @Param("id") id: string,
     @Body() body: UpdateUserStatusDto,
@@ -74,8 +83,21 @@ export class UsersController {
     return createApiResponse(this.usersService.updateStatus(id, body.status, request.user));
   }
 
+  @Patch(":id/role")
+  @UseGuards(AuthGuard, PermissionGuard)
+  @RequirePermissions("role:assign")
+  updateRole(
+    @Param("id") id: string,
+    @Body() body: UpdateUserRoleDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<UserRecord> {
+    return createApiResponse(this.usersService.updateRole(id, body.role, request.user));
+  }
+
   @Delete(":id")
-  remove(@Param("id") id: string): ApiResponse<null> {
-    return createApiResponse(this.usersService.remove(id));
+  @UseGuards(AuthGuard, PermissionGuard)
+  @RequirePermissions("user:delete")
+  remove(@Param("id") id: string, @Request() request: AuthenticatedRequest): ApiResponse<null> {
+    return createApiResponse(this.usersService.remove(id, request.user));
   }
 }

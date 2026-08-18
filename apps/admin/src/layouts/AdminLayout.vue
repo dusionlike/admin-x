@@ -6,8 +6,10 @@ import {
   ArrowDown,
   Bell,
   DataAnalysis,
+  Document,
   Expand,
   Fold,
+  Lock,
   Odometer,
   Setting,
   SwitchButton,
@@ -17,23 +19,18 @@ import {
 
 import ThemeToggleButton from "@/components/ThemeToggleButton.vue";
 import { useAuthStore } from "@/stores/auth";
+import { getRoleDefinition } from "@admin-x/shared";
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 const collapsed = ref(false);
-const isAdministrator = computed(
-  () => authStore.user?.role === "admin" || authStore.user?.role === "super-admin",
-);
+const canViewUsers = computed(() => authStore.can("user:read"));
+const canManageSystem = computed(() => authStore.can("system:manage"));
+const canManageSecurity = computed(() => authStore.can("security:manage"));
+const canViewAudit = computed(() => authStore.can("audit:read"));
 const roleLabel = computed(() => {
-  switch (authStore.user?.role) {
-    case "super-admin":
-      return "超级管理员";
-    case "admin":
-      return "管理员";
-    default:
-      return "普通成员";
-  }
+  return authStore.user ? getRoleDefinition(authStore.user.role).label : "普通用户";
 });
 
 const activeMenu = computed(() => {
@@ -42,6 +39,12 @@ const activeMenu = computed(() => {
   }
   if (route.path.startsWith("/settings")) {
     return "/settings";
+  }
+  if (route.path.startsWith("/security")) {
+    return "/security";
+  }
+  if (route.path.startsWith("/audit")) {
+    return "/audit";
   }
   if (route.path.startsWith("/profile")) {
     return "";
@@ -111,11 +114,11 @@ function showNotifications() {
         >
           团队管理
         </div>
-        <el-menu-item v-if="isAdministrator" index="/users">
+        <el-menu-item v-if="canViewUsers" index="/users">
           <el-icon><UserFilled /></el-icon>
           <span class="menu-label">用户管理</span>
         </el-menu-item>
-        <el-menu-item index="/settings">
+        <el-menu-item v-if="canManageSystem" index="/settings">
           <el-icon><Setting /></el-icon>
           <span class="menu-label">系统设置</span>
         </el-menu-item>
@@ -131,9 +134,13 @@ function showNotifications() {
           <el-icon><DataAnalysis /></el-icon>
           <span class="menu-label">数据分析</span>
         </el-menu-item>
-        <el-menu-item index="/settings?view=security">
-          <el-icon><User /></el-icon>
-          <span class="menu-label">安全中心</span>
+        <el-menu-item v-if="canManageSecurity" index="/security">
+          <el-icon><Lock /></el-icon>
+          <span class="menu-label">安全策略</span>
+        </el-menu-item>
+        <el-menu-item v-if="canViewAudit" index="/audit">
+          <el-icon><Document /></el-icon>
+          <span class="menu-label">安全审计</span>
         </el-menu-item>
       </el-menu>
 

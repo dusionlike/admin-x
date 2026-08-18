@@ -3,6 +3,7 @@ import { expect, test } from "vite-plus/test";
 import {
   createPageMeta,
   getAccountPasswordPolicyError,
+  hasPermission,
   normalizePageQuery,
   toPositiveInt,
 } from "../src/index.ts";
@@ -37,7 +38,7 @@ test("falls back for non-positive numbers", () => {
 });
 
 test("enforces the account password baseline by role", () => {
-  expect(getAccountPasswordPolicyError("Aa1!short", { role: "super-admin" })).toBe(
+  expect(getAccountPasswordPolicyError("Aa1!short", { role: "system-admin" })).toBe(
     "密码长度不能少于 12 位",
   );
   expect(getAccountPasswordPolicyError("Aa1!short", { role: "operator" })).toBeNull();
@@ -49,8 +50,19 @@ test("enforces the account password baseline by role", () => {
   );
   expect(
     getAccountPasswordPolicyError("OwnerPass123!", {
-      role: "super-admin",
+      role: "system-admin",
       username: "admin",
     }),
   ).toBeNull();
+});
+
+test("keeps the four administrator boundaries separate", () => {
+  expect(hasPermission("system-admin", "user:create")).toBe(true);
+  expect(hasPermission("system-admin", "security:manage")).toBe(false);
+  expect(hasPermission("security-admin", "role:assign")).toBe(true);
+  expect(hasPermission("security-admin", "audit:read")).toBe(false);
+  expect(hasPermission("audit-admin", "audit:read")).toBe(true);
+  expect(hasPermission("audit-admin", "user:delete")).toBe(false);
+  expect(hasPermission("business-admin", "business:manage")).toBe(true);
+  expect(hasPermission("business-admin", "role:assign")).toBe(false);
 });

@@ -66,7 +66,7 @@ const setupRules: FormRules<SetupForm> = {
           return;
         }
         const error = getAccountPasswordPolicyError(String(value), {
-          role: "super-admin",
+          role: "system-admin",
           username: setupForm.username,
         });
         callback(error ? new Error(error) : undefined);

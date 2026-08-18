@@ -1,8 +1,104 @@
 export const API_PREFIX = "/api" as const;
 export const DEFAULT_PAGE_SIZE = 10 as const;
 
-export type UserRole = "super-admin" | "admin" | "operator";
+export type UserRole =
+  | "system-admin"
+  | "security-admin"
+  | "audit-admin"
+  | "business-admin"
+  | "operator";
 export type UserStatus = "active" | "invited" | "suspended";
+
+export type Permission =
+  | "dashboard:view"
+  | "user:read"
+  | "user:create"
+  | "user:status"
+  | "user:delete"
+  | "role:assign"
+  | "security:manage"
+  | "audit:read"
+  | "business:manage"
+  | "system:manage";
+
+export interface RoleDefinition {
+  code: UserRole;
+  label: string;
+  description: string;
+  responsibilities: string;
+  permissions: readonly Permission[];
+}
+
+export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
+  {
+    code: "system-admin",
+    description: "负责系统资源、账号生命周期和运行保障，不负责安全策略审计。",
+    label: "系统管理员",
+    permissions: [
+      "dashboard:view",
+      "user:read",
+      "user:create",
+      "user:status",
+      "user:delete",
+      "system:manage",
+    ],
+    responsibilities: "账号、组织、系统参数、运行维护、备份恢复",
+  },
+  {
+    code: "security-admin",
+    description: "负责安全策略、授权审批和访问控制，不负责系统运行和审计记录管理。",
+    label: "安全管理员",
+    permissions: ["dashboard:view", "user:read", "role:assign", "security:manage"],
+    responsibilities: "授权审批、口令策略、访问控制、安全参数",
+  },
+  {
+    code: "audit-admin",
+    description: "负责审计记录的查询、分析和导出，不得修改业务数据或安全策略。",
+    label: "审计管理员",
+    permissions: ["dashboard:view", "audit:read"],
+    responsibilities: "审计查询、审计分析、审计报告、留痕检查",
+  },
+  {
+    code: "business-admin",
+    description: "负责业务域配置和业务数据，不得管理账号、授权或审计记录。",
+    label: "业务管理员",
+    permissions: ["dashboard:view", "business:manage"],
+    responsibilities: "业务配置、业务数据、业务流程和业务报表",
+  },
+  {
+    code: "operator",
+    description: "按业务需要使用系统，仅能访问被授权的业务功能。",
+    label: "普通用户",
+    permissions: ["dashboard:view"],
+    responsibilities: "日常业务操作和个人资料维护",
+  },
+] as const;
+
+export const ADMINISTRATOR_ROLES: readonly UserRole[] = [
+  "system-admin",
+  "security-admin",
+  "audit-admin",
+  "business-admin",
+] as const;
+
+export function hasPermission(role: UserRole, permission: Permission): boolean {
+  return (
+    ROLE_DEFINITIONS.find((definition) => definition.code === role)?.permissions.includes(
+      permission,
+    ) ?? false
+  );
+}
+
+export function getRoleDefinition(role: UserRole): RoleDefinition {
+  return (
+    ROLE_DEFINITIONS.find((definition) => definition.code === role) ??
+    ROLE_DEFINITIONS[ROLE_DEFINITIONS.length - 1]
+  );
+}
+
+export function isAdministratorRole(role: UserRole): boolean {
+  return ADMINISTRATOR_ROLES.includes(role);
+}
 
 export const ACCOUNT_PASSWORD_MIN_LENGTH = 8 as const;
 export const ADMIN_PASSWORD_MIN_LENGTH = 12 as const;
@@ -32,9 +128,7 @@ function hasSequentialRun(value: string): boolean {
 }
 
 export function accountPasswordMinimumLength(role?: UserRole): number {
-  return role === "admin" || role === "super-admin"
-    ? ADMIN_PASSWORD_MIN_LENGTH
-    : ACCOUNT_PASSWORD_MIN_LENGTH;
+  return role && role !== "operator" ? ADMIN_PASSWORD_MIN_LENGTH : ACCOUNT_PASSWORD_MIN_LENGTH;
 }
 
 export function getAccountPasswordPolicyError(
@@ -196,6 +290,29 @@ export interface CreateUserRequest {
 
 export interface UpdateUserStatusRequest {
   status: UserStatus;
+}
+
+export interface UpdateUserRoleRequest {
+  role: UserRole;
+}
+
+export interface AuditRecord {
+  id: string;
+  actorId?: string;
+  actorName: string;
+  actorRole?: UserRole;
+  action: string;
+  resource: string;
+  title: string;
+  description: string;
+  type: ActivityItem["type"];
+  createdAt: string;
+}
+
+export interface AuditListQuery {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
 }
 
 export interface UpdateProfileRequest {

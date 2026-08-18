@@ -25,12 +25,14 @@ export class AuthService {
 
   setupAdmin(input: SetupAdminRequest): LoginResponse {
     const user = this.usersService.createAdmin(input);
-    this.usersService.markLogin(user.id);
+    this.usersService.markLogin(user.id, user);
     return this.issueToken({
+      avatar: user.avatar,
       displayName: user.displayName,
       email: user.email,
       id: user.id,
       lastLoginAt: new Date().toISOString(),
+      remark: user.remark,
       role: user.role,
       username: user.username,
     });
@@ -48,7 +50,7 @@ export class AuthService {
       );
     }
 
-    this.usersService.markLogin(credentials.user.id);
+    this.usersService.markLogin(credentials.user.id, credentials.user);
     return this.issueToken({ ...credentials.user, lastLoginAt: new Date().toISOString() });
   }
 

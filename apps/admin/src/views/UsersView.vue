@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from "element-plus";
 import { Plus, Refresh, Search, UserFilled } from "@element-plus/icons-vue";
 
@@ -11,13 +11,22 @@ import type {
   UserStatus,
   UserRecord,
 } from "@admin-x/shared";
-import { getAccountPasswordPolicyError, getErrorMessage } from "@admin-x/shared";
+import {
+  getAccountPasswordPolicyError,
+  getErrorMessage,
+  getRoleDefinition,
+  ROLE_DEFINITIONS,
+} from "@admin-x/shared";
 
 import { usersApi } from "@/api/users";
+import { useAuthStore } from "@/stores/auth";
 
+const authStore = useAuthStore();
 const loading = ref(false);
 const dialogVisible = ref(false);
+const roleDialogVisible = ref(false);
 const formLoading = ref(false);
+const roleFormLoading = ref(false);
 const tableData = ref<UserRecord[]>([]);
 const formRef = ref<FormInstance>();
 const query = reactive<UserListQuery>({
@@ -40,6 +49,15 @@ const form = reactive<CreateUserRequest>({
   status: "invited",
   username: "",
 });
+const roleForm = reactive<{ displayName: string; id: string; role: UserRole }>({
+  displayName: "",
+  id: "",
+  role: "operator",
+});
+const canCreateUsers = computed(() => authStore.can("user:create"));
+const canManageStatus = computed(() => authStore.can("user:status"));
+const canDeleteUsers = computed(() => authStore.can("user:delete"));
+const canAssignRoles = computed(() => authStore.can("role:assign"));
 
 const formRules: FormRules<CreateUserRequest> = {
   displayName: [{ message: "请输入姓名", required: true, trigger: "blur" }],
@@ -87,11 +105,7 @@ function statusType(status: UserStatus) {
 }
 
 function roleLabel(role: UserRole) {
-  return {
-    admin: "管理员",
-    operator: "普通成员",
-    "super-admin": "超级管理员",
-  }[role];
+  return getRoleDefinition(role).label;
 }
 
 function resetForm() {
@@ -101,6 +115,27 @@ function resetForm() {
   form.role = "operator";
   form.status = "invited";
   form.username = "";
+}
+
+function openRoleDialog(row: UserRecord) {
+  roleForm.displayName = row.displayName;
+  roleForm.id = row.id;
+  roleForm.role = row.role;
+  roleDialogVisible.value = true;
+}
+
+async function handleRoleUpdate() {
+  roleFormLoading.value = true;
+  try {
+    await usersApi.updateRole(roleForm.id, { role: roleForm.role });
+    ElMessage.success("用户角色已更新");
+    roleDialogVisible.value = false;
+    await loadUsers();
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "更新用户角色失败"));
+  } finally {
+    roleFormLoading.value = false;
+  }
 }
 
 async function loadUsers() {
@@ -214,7 +249,7 @@ void loadUsers();
         <h1>用户管理</h1>
         <p class="page-description">管理工作区成员、角色和访问状态。</p>
       </div>
-      <el-button type="primary" @click="openCreateDialog">
+      <el-button v-if="canCreateUsers" type="primary" @click="openCreateDialog">
         <el-icon><Plus /></el-icon>新增用户
       </el-button>
     </div>
@@ -271,12 +306,22 @@ void loadUsers();
           </template>
         </el-table-column>
         <el-table-column label="最近活跃" min-width="150" prop="lastActiveAt" />
-        <el-table-column fixed="right" label="操作" width="180">
+        <el-table-column
+          v-if="canManageStatus || canDeleteUsers || canAssignRoles"
+          fixed="right"
+          label="操作"
+          width="230"
+        >
           <template #default="{ row }">
-            <el-button text type="primary" @click="toggleStatus(row)">
+            <el-button v-if="canManageStatus" text type="primary" @click="toggleStatus(row)">
               {{ row.status === "active" ? "停用" : "启用" }}
             </el-button>
-            <el-button text type="danger" @click="removeUser(row)">删除</el-button>
+            <el-button v-if="canAssignRoles" text type="primary" @click="openRoleDialog(row)">
+              分配角色
+            </el-button>
+            <el-button v-if="canDeleteUsers" text type="danger" @click="removeUser(row)">
+              删除
+            </el-button>
           </template>
         </el-table-column>
         <template #empty>
@@ -331,12 +376,11 @@ void loadUsers();
           位，并包含数字、大小写字母、特殊字符中的至少三类。
         </p>
         <div class="form-grid">
-          <el-form-item label="角色" prop="role">
-            <el-select v-model="form.role" class="full-width">
-              <el-option label="管理员" value="admin" />
-              <el-option label="普通成员" value="operator" />
-              <el-option label="超级管理员" value="super-admin" />
-            </el-select>
+          <el-form-item label="初始角色">
+            <div class="role-init-copy">
+              <el-tag type="info" effect="plain">普通用户</el-tag>
+              <span>账号创建后由安全管理员分配管理角色。</span>
+            </div>
           </el-form-item>
           <el-form-item label="初始状态" prop="status">
             <el-select v-model="form.status" class="full-width">
@@ -349,6 +393,32 @@ void loadUsers();
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="formLoading" @click="handleCreate">确认创建</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="roleDialogVisible" title="分配用户角色" width="440px" destroy-on-close>
+      <p class="role-dialog-copy">
+        正在调整「{{
+          roleForm.displayName
+        }}」的角色。角色分配属于安全授权操作，完成后会写入审计记录。
+      </p>
+      <el-form label-position="top">
+        <el-form-item label="角色">
+          <el-select v-model="roleForm.role" class="full-width">
+            <el-option
+              v-for="definition in ROLE_DEFINITIONS"
+              :key="definition.code"
+              :label="definition.label"
+              :value="definition.code"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="roleDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="roleFormLoading" @click="handleRoleUpdate">
+          保存角色
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -525,6 +595,23 @@ void loadUsers();
 
 .full-width {
   width: 100%;
+}
+
+.role-init-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--ax-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.role-dialog-copy {
+  margin: 0 0 18px;
+  color: var(--ax-muted);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 @media (max-width: 700px) {

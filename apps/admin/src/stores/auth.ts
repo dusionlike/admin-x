@@ -1,7 +1,8 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
-import type { AuthUser, LoginRequest, LoginResponse } from "@admin-x/shared";
+import type { AuthUser, LoginRequest, LoginResponse, Permission } from "@admin-x/shared";
+import { hasPermission } from "@admin-x/shared";
 
 import { authApi } from "@/api/auth";
 
@@ -14,6 +15,8 @@ export const useAuthStore = defineStore("auth", () => {
   const loginLoading = ref(false);
 
   const isAuthenticated = computed(() => Boolean(token.value));
+  const can = (permission: Permission) =>
+    user.value ? hasPermission(user.value.role, permission) : false;
 
   function restore() {
     token.value = localStorage.getItem(TOKEN_KEY) ?? "";
@@ -50,6 +53,7 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   return {
+    can,
     isAuthenticated,
     login,
     loginLoading,

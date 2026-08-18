@@ -75,7 +75,7 @@ await writeFile(
     "  FRONTEND_ORIGIN=http://localhost:3000",
     "  # DATABASE_PATH=/absolute/path/to/data/admin-x.sqlite",
     "",
-    "On first launch, open the login page and create the initial super-admin account.",
+    "On first launch, open the login page and create the initial system administrator account.",
     "",
   ].join("\n"),
   "utf8",

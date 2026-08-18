@@ -5,7 +5,7 @@ import type { FormInstance, FormRules } from "element-plus";
 import { ArrowRight, Camera, Lock, Message, Setting, UserFilled } from "@element-plus/icons-vue";
 
 import type { UpdatePasswordRequest, UpdateProfileRequest, UserRole } from "@admin-x/shared";
-import { getAccountPasswordPolicyError } from "@admin-x/shared";
+import { getAccountPasswordPolicyError, getRoleDefinition } from "@admin-x/shared";
 
 import { usersApi } from "@/api/users";
 import AvatarCropDialog from "@/components/AvatarCropDialog.vue";
@@ -79,13 +79,7 @@ const passwordRules: FormRules<typeof passwordForm> = {
 };
 
 function roleLabel(role?: UserRole) {
-  return (
-    {
-      admin: "管理员",
-      operator: "普通成员",
-      "super-admin": "超级管理员",
-    } satisfies Record<UserRole, string>
-  )[role ?? "operator"];
+  return getRoleDefinition(role ?? "operator").label;
 }
 
 function formatDate(value?: string) {

@@ -7,6 +7,7 @@ import type {
   UserRecord,
   UpdateProfileRequest,
   UpdatePasswordRequest,
+  UpdateUserRoleRequest,
 } from "@admin-x/shared";
 
 import { requestData } from "./http";
@@ -44,6 +45,13 @@ export const usersApi = {
     return requestData<null>({
       method: "DELETE",
       url: `/users/${id}`,
+    });
+  },
+  updateRole(id: string, payload: UpdateUserRoleRequest) {
+    return requestData<UserRecord>({
+      data: payload,
+      method: "PATCH",
+      url: `/users/${id}/role`,
     });
   },
   updateStatus(id: string, payload: UpdateUserStatusRequest) {

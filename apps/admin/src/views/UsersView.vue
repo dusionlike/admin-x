@@ -57,7 +57,21 @@ const roleForm = reactive<{ displayName: string; id: string; role: UserRole }>({
 const canCreateUsers = computed(() => authStore.can("user:create"));
 const canManageStatus = computed(() => authStore.can("user:status"));
 const canDeleteUsers = computed(() => authStore.can("user:delete"));
-const canAssignRoles = computed(() => authStore.can("role:assign"));
+const hasActiveSecurityAdmin = computed(() =>
+  tableData.value.some((user) => user.role === "security-admin" && user.status === "active"),
+);
+const canBootstrapSecurityAdmin = computed(
+  () => authStore.user?.role === "system-admin" && !hasActiveSecurityAdmin.value,
+);
+const canAssignRoles = computed(
+  () => authStore.can("role:assign") || canBootstrapSecurityAdmin.value,
+);
+const availableRoleDefinitions = computed(() => {
+  if (canBootstrapSecurityAdmin.value) {
+    return ROLE_DEFINITIONS.filter((definition) => definition.code === "security-admin");
+  }
+  return authStore.can("role:assign") ? ROLE_DEFINITIONS : [];
+});
 
 const formRules: FormRules<CreateUserRequest> = {
   displayName: [{ message: "请输入姓名", required: true, trigger: "blur" }],
@@ -117,10 +131,16 @@ function resetForm() {
   form.username = "";
 }
 
+function handleInitialRoleChange(role: UserRole) {
+  if (role === "security-admin") {
+    form.status = "active";
+  }
+}
+
 function openRoleDialog(row: UserRecord) {
   roleForm.displayName = row.displayName;
   roleForm.id = row.id;
-  roleForm.role = row.role;
+  roleForm.role = canBootstrapSecurityAdmin.value ? "security-admin" : row.role;
   roleDialogVisible.value = true;
 }
 
@@ -310,18 +330,20 @@ void loadUsers();
           v-if="canManageStatus || canDeleteUsers || canAssignRoles"
           fixed="right"
           label="操作"
-          width="230"
+          width="260"
         >
           <template #default="{ row }">
-            <el-button v-if="canManageStatus" text type="primary" @click="toggleStatus(row)">
-              {{ row.status === "active" ? "停用" : "启用" }}
-            </el-button>
-            <el-button v-if="canAssignRoles" text type="primary" @click="openRoleDialog(row)">
-              分配角色
-            </el-button>
-            <el-button v-if="canDeleteUsers" text type="danger" @click="removeUser(row)">
-              删除
-            </el-button>
+            <div class="user-actions">
+              <el-button v-if="canManageStatus" text type="primary" @click="toggleStatus(row)">
+                {{ row.status === "active" ? "停用" : "启用" }}
+              </el-button>
+              <el-button v-if="canAssignRoles" text type="primary" @click="openRoleDialog(row)">
+                分配角色
+              </el-button>
+              <el-button v-if="canDeleteUsers" text type="danger" @click="removeUser(row)">
+                删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -372,18 +394,34 @@ void loadUsers();
           />
         </el-form-item>
         <p class="password-policy-hint">
-          普通成员密码至少 8 位，管理员密码至少 12
-          位，并包含数字、大小写字母、特殊字符中的至少三类。
+          {{
+            form.role === "security-admin"
+              ? "首位安全管理员密码至少 12 位，并包含数字、大小写字母、特殊字符中的至少三类。"
+              : "普通成员密码至少 8 位，并包含数字、大小写字母、特殊字符中的至少三类。"
+          }}
         </p>
         <div class="form-grid">
           <el-form-item label="初始角色">
-            <div class="role-init-copy">
+            <el-select
+              v-if="canBootstrapSecurityAdmin"
+              v-model="form.role"
+              class="full-width"
+              @change="handleInitialRoleChange"
+            >
+              <el-option label="普通用户" value="operator" />
+              <el-option label="安全管理员（首次初始化）" value="security-admin" />
+            </el-select>
+            <div v-else class="role-init-copy">
               <el-tag type="info" effect="plain">普通用户</el-tag>
               <span>账号创建后由安全管理员分配管理角色。</span>
             </div>
           </el-form-item>
           <el-form-item label="初始状态" prop="status">
-            <el-select v-model="form.status" class="full-width">
+            <el-select
+              v-model="form.status"
+              class="full-width"
+              :disabled="form.role === 'security-admin'"
+            >
               <el-option label="待激活" value="invited" />
               <el-option label="正常" value="active" />
             </el-select>
@@ -398,15 +436,18 @@ void loadUsers();
 
     <el-dialog v-model="roleDialogVisible" title="分配用户角色" width="440px" destroy-on-close>
       <p class="role-dialog-copy">
-        正在调整「{{
-          roleForm.displayName
-        }}」的角色。角色分配属于安全授权操作，完成后会写入审计记录。
+        正在调整「{{ roleForm.displayName }}」的角色。
+        {{
+          canBootstrapSecurityAdmin
+            ? "首次初始化只能指定安全管理员。"
+            : "角色分配属于安全授权操作，完成后会写入审计记录。"
+        }}
       </p>
       <el-form label-position="top">
         <el-form-item label="角色">
           <el-select v-model="roleForm.role" class="full-width">
             <el-option
-              v-for="definition in ROLE_DEFINITIONS"
+              v-for="definition in availableRoleDefinitions"
               :key="definition.code"
               :label="definition.label"
               :value="definition.code"
@@ -542,6 +583,18 @@ void loadUsers();
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.user-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.user-actions :deep(.el-button) {
+  margin: 0;
 }
 
 .users-table :deep(.el-tag) {

@@ -95,8 +95,12 @@ export class UsersService {
   }
 
   create(input: CreateUserRequest, actor?: AuthUser): UserRecord {
-    if (input.role !== "operator") {
-      throw new ForbiddenException("新账号默认只能创建为普通用户，角色需由安全管理员分配");
+    const bootstrapSecurityAdmin =
+      input.role === "security-admin" && this.canBootstrapSecurityAdmin(actor);
+    if (input.role !== "operator" && !bootstrapSecurityAdmin) {
+      throw new ForbiddenException(
+        "新账号默认只能创建为普通用户；首位安全管理员只能由系统管理员一次性初始化",
+      );
     }
     const user = this.insertUser({
       displayName: input.displayName,
@@ -104,7 +108,7 @@ export class UsersService {
       password: input.password,
       remark: input.remark,
       role: input.role,
-      status: input.status ?? "invited",
+      status: bootstrapSecurityAdmin ? "active" : (input.status ?? "invited"),
       username: input.username,
     });
     this.database.addActivity({
@@ -189,7 +193,7 @@ export class UsersService {
     if (actor.id === id) {
       throw new ConflictException("不能修改当前登录账号的角色");
     }
-    if (actor.role !== "security-admin" && !this.canBootstrapRoleAssignment(actor)) {
+    if (actor.role !== "security-admin" && !this.canBootstrapRoleAssignment(actor, role)) {
       throw new ForbiddenException("只有安全管理员可以分配角色");
     }
 
@@ -451,8 +455,8 @@ export class UsersService {
     return this.findById(id);
   }
 
-  private canBootstrapRoleAssignment(actor: AuthUser): boolean {
-    if (actor.role !== "system-admin") {
+  private canBootstrapSecurityAdmin(actor?: AuthUser): boolean {
+    if (actor?.role !== "system-admin") {
       return false;
     }
     const activeSecurityAdmin = this.database.connection
@@ -461,6 +465,10 @@ export class UsersService {
       )
       .get() as { count?: number | bigint } | undefined;
     return Number(activeSecurityAdmin?.count ?? 0) === 0;
+  }
+
+  private canBootstrapRoleAssignment(actor: AuthUser, role: UserRole): boolean {
+    return role === "security-admin" && this.canBootstrapSecurityAdmin(actor);
   }
 
   private findById(id: string): UserRecord {

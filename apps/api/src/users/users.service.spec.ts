@@ -42,6 +42,48 @@ test("creates and updates a user", () => {
   database.onModuleDestroy();
 });
 
+test("allows the system administrator to bootstrap one active security administrator", () => {
+  const database = new DatabaseService(":memory:");
+  const service = new UsersService(database);
+  const systemAdmin = service.createAdmin({
+    displayName: "系统管理员",
+    email: "bootstrap-system@admin-x.dev",
+    password: "SystemPass123!",
+    username: "bootstrap-system",
+  });
+  const systemActor = service.findAuthenticatedUser(systemAdmin.id)?.user;
+
+  expect(systemActor).toBeDefined();
+  const securityAdmin = service.create(
+    {
+      displayName: "安全管理员",
+      email: "bootstrap-security@admin-x.dev",
+      password: "SecurityPass123!",
+      role: "security-admin",
+      status: "invited",
+      username: "bootstrap-security",
+    },
+    systemActor,
+  );
+
+  expect(securityAdmin.role).toBe("security-admin");
+  expect(securityAdmin.status).toBe("active");
+  expect(() =>
+    service.create(
+      {
+        displayName: "第二安全管理员",
+        email: "bootstrap-security-2@admin-x.dev",
+        password: "SecurityPass456!",
+        role: "security-admin",
+        status: "active",
+        username: "bootstrap-security-2",
+      },
+      systemActor,
+    ),
+  ).toThrow("首位安全管理员只能由系统管理员一次性初始化");
+  database.onModuleDestroy();
+});
+
 test("allows bootstrap role assignment only until a security administrator exists", () => {
   const database = new DatabaseService(":memory:");
   const service = new UsersService(database);

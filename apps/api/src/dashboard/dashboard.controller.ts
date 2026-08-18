@@ -1,6 +1,6 @@
 import { Controller, Get, Inject, UseGuards } from "@nestjs/common";
 
-import type { ApiResponse, DashboardOverview } from "@admin-x/shared";
+import type { AnalyticsOverview, ApiResponse, DashboardOverview } from "@admin-x/shared";
 import { createApiResponse } from "@admin-x/shared";
 
 import { AuthGuard } from "../auth/auth.guard.js";
@@ -14,5 +14,10 @@ export class DashboardController {
   @Get("overview")
   overview(): ApiResponse<DashboardOverview> {
     return createApiResponse(this.dashboardService.getOverview());
+  }
+
+  @Get("analytics")
+  analytics(): ApiResponse<AnalyticsOverview> {
+    return createApiResponse(this.dashboardService.getAnalytics());
   }
 }

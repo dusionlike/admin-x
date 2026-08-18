@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 
-import type { DashboardOverview, TrendItem } from "@admin-x/shared";
+import { ROLE_DEFINITIONS } from "@admin-x/shared";
+import type { AnalyticsOverview, DashboardOverview, TrendItem } from "@admin-x/shared";
 
 import { DatabaseService } from "../database/database.service.js";
 import { UsersService } from "../users/users.service.js";
@@ -74,23 +75,15 @@ export class DashboardService {
           description: "查看业务数据走势",
           icon: "visits",
           key: "analytics",
-          route: "/dashboard?view=analytics",
+          route: "/analytics",
           title: "数据分析",
         },
         {
-          color: "#39b993",
-          description: "配置工作台偏好",
-          icon: "active",
-          key: "settings",
-          route: "/settings",
-          title: "系统设置",
-        },
-        {
           color: "#edaa47",
-          description: "检查系统运行状态",
+          description: "查看角色权限边界",
           icon: "health",
           key: "health",
-          route: "/settings?view=security",
+          route: "/security",
           title: "安全中心",
         },
       ],
@@ -103,6 +96,47 @@ export class DashboardService {
       })),
       trend,
     };
+  }
+
+  getAnalytics(): AnalyticsOverview {
+    const today = new Date();
+    const trendStart = new Date(today.getTime() - 6 * DAY_IN_MILLISECONDS).toISOString();
+    const trend = buildTrend(today, this.database.getDailyVisits(trendStart));
+    const totalVisits = trend.reduce((sum, item) => sum + item.value, 0);
+    const peakDay = trend.reduce(
+      (peak, item) => (item.value > peak.value ? item : peak),
+      trend[0] ?? { label: dayKey(today), value: 0 },
+    );
+    const roleCounts = this.countBy("role");
+    const statusCounts = this.countBy("status");
+
+    return {
+      roleDistribution: ROLE_DEFINITIONS.map((definition) => ({
+        key: definition.code,
+        label: definition.label,
+        value: roleCounts.get(definition.code) ?? 0,
+      })),
+      statusDistribution: [
+        { key: "active", label: "正常", value: statusCounts.get("active") ?? 0 },
+        { key: "invited", label: "待激活", value: statusCounts.get("invited") ?? 0 },
+        { key: "suspended", label: "已停用", value: statusCounts.get("suspended") ?? 0 },
+      ],
+      summary: {
+        activeUsers: this.usersService.countByStatus("active"),
+        averageDailyVisits: Number((totalVisits / 7).toFixed(1)),
+        peakDay,
+        totalUsers: this.usersService.count(),
+        totalVisits,
+      },
+      trend,
+    };
+  }
+
+  private countBy(column: "role" | "status"): Map<string, number> {
+    const rows = this.database.connection
+      .prepare(`SELECT ${column} AS key, COUNT(*) AS count FROM users GROUP BY ${column}`)
+      .all() as Array<{ key?: string; count?: number | bigint }>;
+    return new Map(rows.map((row) => [String(row.key), toNumber(row.count)]));
   }
 }
 
@@ -118,6 +152,10 @@ function buildTrend(today: Date, dailyVisits: Map<string, number>): TrendItem[] 
 
 function dayKey(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+function toNumber(value: number | bigint | undefined): number {
+  return typeof value === "bigint" ? Number(value) : Number(value ?? 0);
 }
 
 function formatActivityTime(value: string): string {

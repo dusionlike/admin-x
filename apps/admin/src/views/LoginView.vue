@@ -156,14 +156,14 @@ onMounted(() => {
 
     <section class="login-intro">
       <div class="login-brand">
-        <div class="brand-mark">AX</div>
+        <img class="brand-mark" src="/icon.png" alt="" aria-hidden="true" />
         <span>Admin X</span>
       </div>
       <div class="login-intro__content">
         <p class="eyebrow">ADMIN CONSOLE</p>
         <h1>让每一项工作，<br /><span>都能清晰、高效地完成。</span></h1>
         <p class="login-intro__description">
-          面向团队的 Admin X 管理后台，统一管理成员、数据和系统设置。
+          面向团队的 Admin X 管理后台，统一管理成员、数据和安全策略。
         </p>
         <div class="login-highlights">
           <div>
@@ -175,8 +175,8 @@ onMounted(() => {
             <span>维护成员与角色</span>
           </div>
           <div>
-            <strong>系统设置</strong>
-            <span>按需配置工作台</span>
+            <strong>安全策略</strong>
+            <span>按职责保护系统</span>
           </div>
         </div>
       </div>
@@ -191,7 +191,7 @@ onMounted(() => {
           <p>
             {{
               needsSetup
-                ? "首次使用，请创建首位管理员账号。"
+                ? "首次使用，请创建首位管理员账号，该账号将自动成为系统管理员。"
                 : "使用管理员为你创建的账号，继续管理工作台。"
             }}
           </p>
@@ -267,7 +267,7 @@ onMounted(() => {
             native-type="submit"
             :loading="setupLoading"
           >
-            创建管理员并进入管理中心
+            创建系统管理员并进入管理中心
             <el-icon>
               <ArrowRight />
             </el-icon>
@@ -318,7 +318,9 @@ onMounted(() => {
         </el-form>
       </div>
       <p class="login-panel__tip">
-        {{ needsSetup ? "管理员账号只能初始化一次" : "账号由管理员创建，如需访问请联系系统管理员" }}
+        {{
+          needsSetup ? "系统管理员账号只能初始化一次" : "账号由管理员创建，如需访问请联系系统管理员"
+        }}
       </p>
     </section>
   </div>
@@ -411,10 +413,10 @@ onMounted(() => {
 }
 
 .login-brand .brand-mark {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 38px;
   height: 38px;
+  object-fit: cover;
   border-radius: 12px;
   color: #fff;
   font-size: 13px;
@@ -497,7 +499,7 @@ onMounted(() => {
 }
 
 .login-card {
-  width: min(100%, 420px);
+  width: min(100%, 480px);
   padding: 42px 44px 38px;
   background: rgb(255 255 255 / 86%);
   border: 1px solid rgb(255 255 255 / 94%);

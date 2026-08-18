@@ -258,6 +258,27 @@ export interface DashboardOverview {
   quickActions: QuickAction[];
 }
 
+export interface AnalyticsSummary {
+  totalVisits: number;
+  averageDailyVisits: number;
+  peakDay: TrendItem;
+  totalUsers: number;
+  activeUsers: number;
+}
+
+export interface AnalyticsDistributionItem {
+  key: string;
+  label: string;
+  value: number;
+}
+
+export interface AnalyticsOverview {
+  summary: AnalyticsSummary;
+  trend: TrendItem[];
+  roleDistribution: AnalyticsDistributionItem[];
+  statusDistribution: AnalyticsDistributionItem[];
+}
+
 export interface UserRecord {
   id: string;
   username: string;

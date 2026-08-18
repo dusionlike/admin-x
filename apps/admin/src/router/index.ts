@@ -29,16 +29,16 @@ const router = createRouter({
           meta: { title: "工作台", requiresAuth: true },
         },
         {
+          path: "analytics",
+          name: "analytics",
+          component: () => import("@/views/AnalyticsView.vue"),
+          meta: { title: "数据分析", requiresAuth: true },
+        },
+        {
           path: "users",
           name: "users",
           component: () => import("@/views/UsersView.vue"),
           meta: { title: "用户管理", requiresAuth: true, permission: "user:read" },
-        },
-        {
-          path: "settings",
-          name: "settings",
-          component: () => import("@/views/SettingsView.vue"),
-          meta: { title: "系统设置", requiresAuth: true, permission: "system:manage" },
         },
         {
           path: "security",

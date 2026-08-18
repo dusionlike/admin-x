@@ -11,7 +11,6 @@ import {
   Fold,
   Lock,
   Odometer,
-  Setting,
   SwitchButton,
   User,
   UserFilled,
@@ -26,7 +25,6 @@ const router = useRouter();
 const authStore = useAuthStore();
 const collapsed = ref(false);
 const canViewUsers = computed(() => authStore.can("user:read"));
-const canManageSystem = computed(() => authStore.can("system:manage"));
 const canManageSecurity = computed(() => authStore.can("security:manage"));
 const canViewAudit = computed(() => authStore.can("audit:read"));
 const roleLabel = computed(() => {
@@ -34,11 +32,11 @@ const roleLabel = computed(() => {
 });
 
 const activeMenu = computed(() => {
+  if (route.path.startsWith("/analytics")) {
+    return "/analytics";
+  }
   if (route.path.startsWith("/users")) {
     return "/users";
-  }
-  if (route.path.startsWith("/settings")) {
-    return "/settings";
   }
   if (route.path.startsWith("/security")) {
     return "/security";
@@ -81,7 +79,7 @@ function showNotifications() {
   <el-container class="admin-shell">
     <el-aside class="admin-aside" :class="{ 'is-collapsed': collapsed }">
       <div class="brand-block">
-        <div class="brand-mark">AX</div>
+        <img class="brand-mark" src="/icon.png" alt="" aria-hidden="true" />
         <div class="brand-copy" :class="{ 'is-hidden': collapsed }" :aria-hidden="collapsed">
           <strong>Admin X</strong>
           <span>运营管理中心</span>
@@ -118,10 +116,6 @@ function showNotifications() {
           <el-icon><UserFilled /></el-icon>
           <span class="menu-label">用户管理</span>
         </el-menu-item>
-        <el-menu-item v-if="canManageSystem" index="/settings">
-          <el-icon><Setting /></el-icon>
-          <span class="menu-label">系统设置</span>
-        </el-menu-item>
 
         <div
           class="menu-section-title"
@@ -130,7 +124,7 @@ function showNotifications() {
         >
           数据与服务
         </div>
-        <el-menu-item index="/dashboard?view=analytics">
+        <el-menu-item index="/analytics">
           <el-icon><DataAnalysis /></el-icon>
           <span class="menu-label">数据分析</span>
         </el-menu-item>

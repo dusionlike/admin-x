@@ -37,6 +37,11 @@ export const useAuthStore = defineStore("auth", () => {
     localStorage.setItem(USER_KEY, JSON.stringify(result.user));
   }
 
+  function updateUser(nextUser: AuthUser) {
+    user.value = nextUser;
+    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+  }
+
   function logout() {
     token.value = "";
     user.value = null;
@@ -52,6 +57,7 @@ export const useAuthStore = defineStore("auth", () => {
     restore,
     setSession,
     token,
+    updateUser,
     user,
   };
 });

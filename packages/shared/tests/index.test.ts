@@ -1,6 +1,11 @@
 import { expect, test } from "vite-plus/test";
 
-import { createPageMeta, normalizePageQuery, toPositiveInt } from "../src/index.ts";
+import {
+  createPageMeta,
+  getAccountPasswordPolicyError,
+  normalizePageQuery,
+  toPositiveInt,
+} from "../src/index.ts";
 
 test("creates predictable pagination metadata", () => {
   expect(createPageMeta(25, 2, 10)).toEqual({
@@ -29,4 +34,23 @@ test("normalizes user list query values", () => {
 
 test("falls back for non-positive numbers", () => {
   expect(toPositiveInt("not-a-number", 10)).toBe(10);
+});
+
+test("enforces the account password baseline by role", () => {
+  expect(getAccountPasswordPolicyError("Aa1!short", { role: "super-admin" })).toBe(
+    "密码长度不能少于 12 位",
+  );
+  expect(getAccountPasswordPolicyError("Aa1!short", { role: "operator" })).toBeNull();
+  expect(getAccountPasswordPolicyError("longpassword", { role: "operator" })).toBe(
+    "密码至少包含数字、大小写字母、特殊字符中的三类",
+  );
+  expect(getAccountPasswordPolicyError("Abcd1234!", { role: "operator" })).toBe(
+    "密码过于简单，请避免使用连续字符",
+  );
+  expect(
+    getAccountPasswordPolicyError("OwnerPass123!", {
+      role: "super-admin",
+      username: "admin",
+    }),
+  ).toBeNull();
 });

@@ -3,7 +3,7 @@
     <div class="not-found-page__code">404</div>
     <h1>页面走丢了</h1>
     <p>你访问的页面不存在，或者已经被移动。</p>
-    <el-button type="primary" @click="$router.push('/dashboard')">返回工作台</el-button>
+    <el-button type="primary" @click="$router.push('/dashboard')">返回管理中心</el-button>
   </div>
 </template>
 

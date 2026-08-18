@@ -1,3 +1,5 @@
+import "./env.js";
+
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +22,9 @@ if (!process.env.DATABASE_PATH?.trim()) {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  app.useBodyParser("json", { limit: "1mb" });
+  app.useBodyParser("urlencoded", { limit: "1mb" });
   const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? "http://localhost:5173")
     .split(",")
     .map((origin) => origin.trim())
@@ -61,7 +65,7 @@ async function bootstrap() {
     console.log(`Admin X web assets were not found at ${frontendDist}`);
   }
 
-  const port = Number(process.env.PORT ?? 3000);
+  const port = Number(process.env.PORT?.trim() || 3000);
   await app.listen(port);
   console.log(`Admin X API is running at http://localhost:${port}${API_PREFIX}`);
 }

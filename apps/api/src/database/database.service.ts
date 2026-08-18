@@ -29,6 +29,8 @@ const SCHEMA = `
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('super-admin', 'admin', 'operator')),
     status TEXT NOT NULL CHECK (status IN ('active', 'invited', 'suspended')),
+    avatar TEXT NOT NULL DEFAULT '',
+    remark TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     last_active_at TEXT
   );
@@ -70,6 +72,20 @@ export class DatabaseService implements OnModuleDestroy {
     this.connection = new DatabaseSync(databasePath);
     this.connection.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
     this.connection.exec(SCHEMA);
+    this.migrateExistingDatabase();
+  }
+
+  private migrateExistingDatabase(): void {
+    for (const [name, definition] of [
+      ["avatar", "TEXT NOT NULL DEFAULT ''"],
+      ["remark", "TEXT NOT NULL DEFAULT ''"],
+    ] as const) {
+      try {
+        this.connection.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`);
+      } catch {
+        // The column already exists on a current database.
+      }
+    }
   }
 
   addActivity(input: Omit<StoredActivity, "createdAt" | "id">): void {

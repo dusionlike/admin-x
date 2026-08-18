@@ -23,7 +23,7 @@ export class SetupAdminDto implements SetupAdminRequest {
 
   @IsNotEmpty({ message: "密码不能为空" })
   @IsString({ message: "密码必须是字符串" })
-  @MinLength(6, { message: "密码长度不能少于 6 位" })
+  @MinLength(8, { message: "密码长度不能少于 8 位" })
   password!: string;
 
   @IsNotEmpty({ message: "用户名不能为空" })

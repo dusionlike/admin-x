@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { Component } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import { GaugeChart, LineChart } from "echarts/charts";
+import { GridComponent, TooltipComponent } from "echarts/components";
+import { init, use } from "echarts/core";
+import type { ECharts } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
 import {
   ArrowRight,
   DataAnalysis,
@@ -19,11 +24,20 @@ import { getErrorMessage } from "@admin-x/shared";
 
 import { dashboardApi } from "@/api/dashboard";
 import { useAuthStore } from "@/stores/auth";
+import { useThemeStore } from "@/stores/theme";
+
+use([CanvasRenderer, GridComponent, LineChart, GaugeChart, TooltipComponent]);
 
 const router = useRouter();
 const authStore = useAuthStore();
+const themeStore = useThemeStore();
 const overview = ref<DashboardOverview | null>(null);
 const loading = ref(true);
+const trendChartRef = ref<HTMLDivElement | null>(null);
+const healthChartRef = ref<HTMLDivElement | null>(null);
+
+let trendChart: ECharts | null = null;
+let healthChart: ECharts | null = null;
 
 const metricIcons: Record<string, Component> = {
   active: TrendCharts,
@@ -31,11 +45,6 @@ const metricIcons: Record<string, Component> = {
   users: UserFilled,
   visits: DataAnalysis,
 };
-
-const maxTrendValue = computed(() => {
-  const values = overview.value?.trend.map((item) => item.value) ?? [1];
-  return Math.max(...values, 1);
-});
 
 const greeting = computed(() => {
   const hour = new Date().getHours();
@@ -48,16 +57,150 @@ const greeting = computed(() => {
   return "晚上好";
 });
 
+const recentActivities = computed(() => overview.value?.recentActivity.slice(0, 5) ?? []);
+
 function metricIcon(key: string) {
   return metricIcons[key] ?? DataAnalysis;
 }
 
-function trendHeight(value: number) {
-  return `${Math.max(10, (value / maxTrendValue.value) * 100)}%`;
-}
-
 function formatMetric(value: number, suffix?: string) {
   return `${value.toLocaleString("zh-CN")}${suffix ?? ""}`;
+}
+
+function cssVariable(name: string, fallback: string) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+function getChartColors() {
+  return {
+    content: cssVariable("--ax-content", "#344054"),
+    heading: cssVariable("--ax-heading", "#1d2939"),
+    line: cssVariable("--ax-line-soft", "#f0f2f6"),
+    muted: cssVariable("--ax-muted", "#718096"),
+    primary: cssVariable("--ax-primary", "#6755e8"),
+    ringTrack: cssVariable("--ax-ring-track", "#e9e7fd"),
+    surface: cssVariable("--ax-surface", "#ffffff"),
+  };
+}
+
+function renderTrendChart() {
+  const container = trendChartRef.value;
+  if (!container || !overview.value) {
+    return;
+  }
+
+  if (!trendChart || trendChart.getDom() !== container) {
+    trendChart?.dispose();
+    trendChart = init(container);
+  }
+
+  const colors = getChartColors();
+  trendChart.setOption({
+    animationDuration: 500,
+    grid: { bottom: 20, containLabel: true, left: 12, right: 14, top: 20 },
+    tooltip: {
+      axisPointer: { lineStyle: { color: colors.primary, type: "dashed" } },
+      backgroundColor: colors.surface,
+      borderColor: colors.line,
+      formatter: "{b}<br/>登录次数：{c}",
+      textStyle: { color: colors.content, fontSize: 11 },
+      trigger: "axis",
+    },
+    xAxis: {
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: colors.muted, fontSize: 10, margin: 12 },
+      boundaryGap: false,
+      data: overview.value.trend.map((item) => item.label),
+      type: "category",
+    },
+    yAxis: {
+      axisLabel: { color: colors.muted, fontSize: 10 },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      min: 0,
+      splitLine: { lineStyle: { color: colors.line, type: "dashed" } },
+      splitNumber: 4,
+      type: "value",
+    },
+    series: [
+      {
+        areaStyle: { color: colors.ringTrack, opacity: 0.55 },
+        data: overview.value.trend.map((item) => item.value),
+        emphasis: { focus: "series" },
+        itemStyle: { borderColor: colors.surface, borderWidth: 2, color: colors.primary },
+        lineStyle: { color: colors.primary, width: 3 },
+        smooth: true,
+        symbol: "circle",
+        symbolSize: 7,
+        type: "line",
+      },
+    ],
+  });
+}
+
+function renderHealthChart() {
+  const container = healthChartRef.value;
+  if (!container) {
+    return;
+  }
+
+  if (!healthChart || healthChart.getDom() !== container) {
+    healthChart?.dispose();
+    healthChart = init(container);
+  }
+
+  const colors = getChartColors();
+  healthChart.setOption({
+    animationDuration: 700,
+    series: [
+      {
+        anchor: { show: false },
+        axisLine: {
+          lineStyle: {
+            color: [[1, colors.ringTrack]],
+            width: 13,
+          },
+        },
+        axisLabel: { show: false },
+        axisTick: { show: false },
+        center: ["50%", "50%"],
+        data: [{ name: "运行状态", value: 99.9 }],
+        detail: {
+          color: colors.heading,
+          fontSize: 22,
+          fontWeight: 700,
+          offsetCenter: [0, "-2%"],
+          valueAnimation: true,
+          formatter: "{value}%",
+        },
+        endAngle: -270,
+        pointer: { show: false },
+        progress: {
+          itemStyle: { color: colors.primary },
+          roundCap: true,
+          show: true,
+          width: 13,
+        },
+        radius: "92%",
+        splitLine: { show: false },
+        startAngle: 90,
+        title: { color: colors.muted, fontSize: 10, offsetCenter: [0, "31%"], show: true },
+        type: "gauge",
+      },
+    ],
+  });
+}
+
+async function renderCharts() {
+  await nextTick();
+  renderTrendChart();
+  renderHealthChart();
+}
+
+function resizeCharts() {
+  trendChart?.resize();
+  healthChart?.resize();
 }
 
 function activityIcon(type: string) {
@@ -88,7 +231,24 @@ async function loadOverview() {
   }
 }
 
-onMounted(loadOverview);
+watch(overview, () => void renderCharts(), { deep: true });
+watch(
+  () => themeStore.isDark,
+  () => void renderCharts(),
+);
+
+onMounted(() => {
+  window.addEventListener("resize", resizeCharts);
+  void loadOverview();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", resizeCharts);
+  trendChart?.dispose();
+  healthChart?.dispose();
+  trendChart = null;
+  healthChart = null;
+});
 </script>
 
 <template>
@@ -139,8 +299,8 @@ onMounted(loadOverview);
           <template #header>
             <div class="card-heading">
               <div>
-                <h2>访问趋势</h2>
-                <p>过去 7 天的系统访问情况</p>
+                <h2>登录趋势</h2>
+                <p>过去 7 天的后台登录情况</p>
               </div>
               <el-button text type="primary"
                 >最近 7 天 <el-icon><ArrowRight /></el-icon
@@ -151,18 +311,9 @@ onMounted(loadOverview);
             <strong>{{
               overview.trend.reduce((sum, item) => sum + item.value, 0).toLocaleString("zh-CN")
             }}</strong>
-            <span>总访问次数</span>
+            <span>总登录次数</span>
           </div>
-          <div class="trend-chart">
-            <div v-for="item in overview.trend" :key="item.label" class="trend-chart__item">
-              <div class="trend-chart__bar-wrap">
-                <div class="trend-chart__bar" :style="{ height: trendHeight(item.value) }">
-                  <span>{{ item.value }}</span>
-                </div>
-              </div>
-              <small>{{ item.label }}</small>
-            </div>
-          </div>
+          <div ref="trendChartRef" class="trend-chart" aria-label="过去七天登录趋势图"></div>
         </el-card>
 
         <el-card class="dashboard-card activity-card" shadow="never">
@@ -176,11 +327,7 @@ onMounted(loadOverview);
             </div>
           </template>
           <div class="activity-list">
-            <div
-              v-for="activity in overview.recentActivity"
-              :key="activity.id"
-              class="activity-item"
-            >
+            <div v-for="activity in recentActivities" :key="activity.id" class="activity-item">
               <span class="activity-item__icon"
                 ><el-icon><component :is="activityIcon(activity.type)" /></el-icon
               ></span>
@@ -231,18 +378,16 @@ onMounted(loadOverview);
           <template #header>
             <div class="card-heading">
               <div>
-                <h2>服务健康度</h2>
+                <h2>服务状态</h2>
                 <p>核心服务实时状态</p>
               </div>
               <span class="health-status"><i></i>全部正常</span>
             </div>
           </template>
-          <div class="health-ring">
-            <div class="health-ring__inner"><strong>99.9%</strong><span>健康度</span></div>
-          </div>
+          <div ref="healthChartRef" class="health-ring" aria-label="服务运行状态图"></div>
           <div class="health-items">
             <div>
-              <span><i class="health-dot health-dot--green"></i>API 服务</span><strong>正常</strong>
+              <span><i class="health-dot health-dot--green"></i>管理 API</span><strong>正常</strong>
             </div>
             <div>
               <span><i class="health-dot health-dot--green"></i>数据库</span><strong>正常</strong>
@@ -409,6 +554,11 @@ onMounted(loadOverview);
   padding: 18px 22px 22px;
 }
 
+.trend-card :deep(.el-card__body) {
+  display: flex;
+  flex-direction: column;
+}
+
 .card-heading {
   display: flex;
   align-items: flex-start;
@@ -458,63 +608,11 @@ onMounted(loadOverview);
 }
 
 .trend-chart {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  height: 182px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--ax-line-soft);
-}
-
-.trend-chart__item {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  height: 100%;
-  gap: 9px;
-}
-
-.trend-chart__bar-wrap {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
+  flex: 1 1 160px;
+  min-height: 160px;
   width: 100%;
-  height: calc(100% - 20px);
-}
-
-.trend-chart__bar {
-  position: relative;
-  width: min(35px, 56%);
-  min-height: 18px;
-  background: linear-gradient(180deg, #a59af4 0%, var(--ax-primary) 100%);
-  border-radius: 7px 7px 3px 3px;
-  transition: height 0.3s ease;
-}
-
-.trend-chart__bar::after {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 50%;
-  content: "";
-  background: linear-gradient(180deg, rgb(255 255 255 / 14%), transparent);
-  border-radius: inherit;
-}
-
-.trend-chart__bar span {
-  position: absolute;
-  top: -21px;
-  left: 50%;
-  color: var(--ax-muted);
-  font-size: 9px;
-  transform: translateX(-50%);
-}
-
-.trend-chart__item small {
-  color: var(--ax-muted);
-  font-size: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--ax-line-soft);
 }
 
 .activity-list {
@@ -658,36 +756,9 @@ onMounted(loadOverview);
 }
 
 .health-ring {
-  display: grid;
-  width: 128px;
-  height: 128px;
-  margin: 2px auto 14px;
-  place-items: center;
-  background: conic-gradient(var(--ax-primary) 0 88%, var(--ax-ring-track) 88% 100%);
-  border-radius: 50%;
-}
-
-.health-ring__inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 99px;
-  height: 99px;
-  background: var(--ax-surface);
-  border-radius: 50%;
-}
-
-.health-ring__inner strong {
-  color: var(--ax-content);
-  font-size: 21px;
-  letter-spacing: -0.05em;
-}
-
-.health-ring__inner span {
-  margin-top: 3px;
-  color: var(--ax-muted);
-  font-size: 10px;
+  width: 170px;
+  height: 170px;
+  margin: 0 auto 2px;
 }
 
 .health-items {

@@ -1,4 +1,11 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 
 import type {
@@ -6,14 +13,16 @@ import type {
   CreateUserRequest,
   PageResult,
   SetupAdminRequest,
+  UpdatePasswordRequest,
+  UpdateProfileRequest,
   UserListQuery,
   UserRecord,
   UserRole,
   UserStatus,
 } from "@admin-x/shared";
-import { createPageMeta, normalizePageQuery } from "@admin-x/shared";
+import { createPageMeta, getAccountPasswordPolicyError, normalizePageQuery } from "@admin-x/shared";
 
-import { hashPassword } from "../auth/password.js";
+import { hashPassword, verifyPassword } from "../auth/password.js";
 import { DatabaseService } from "../database/database.service.js";
 
 interface UserRow {
@@ -24,6 +33,8 @@ interface UserRow {
   password_hash: string;
   role: UserRole;
   status: UserStatus;
+  avatar: string;
+  remark: string;
   created_at: string;
   last_active_at: string | null;
 }
@@ -59,7 +70,8 @@ export class UsersService {
     const start = (normalized.page - 1) * normalized.pageSize;
     const rows = this.database.connection
       .prepare(
-        `SELECT id, username, display_name, email, role, status, created_at, last_active_at
+        `SELECT id, username, display_name, email, role, status, avatar, remark,
+                created_at, last_active_at
          FROM users
          ${whereClause}
          ORDER BY created_at DESC
@@ -81,6 +93,7 @@ export class UsersService {
       displayName: input.displayName,
       email: input.email,
       password: input.password,
+      remark: input.remark,
       role: input.role,
       status: input.status ?? "invited",
       username: input.username,
@@ -125,16 +138,105 @@ export class UsersService {
     }
   }
 
-  updateStatus(id: string, status: UserStatus): UserRecord {
+  updateStatus(id: string, status: UserStatus, actor?: AuthUser): UserRecord {
     const user = this.findById(id);
+    if (status === "suspended" && user.status !== "suspended") {
+      if (actor?.id === id) {
+        throw new ConflictException("不能停用当前登录账号");
+      }
+      if (user.role !== "operator") {
+        const activeAdminCount = this.database.connection
+          .prepare(
+            `SELECT COUNT(*) AS count FROM users
+             WHERE status = 'active' AND role IN ('admin', 'super-admin')`,
+          )
+          .get() as { count?: number | bigint } | undefined;
+        if (Number(activeAdminCount?.count ?? 0) <= 1) {
+          throw new ConflictException("至少保留一个正常的管理员账号");
+        }
+      }
+    }
+    if (user.status === status) {
+      return user;
+    }
     this.database.connection.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, id);
     const updatedUser = this.findById(id);
+    const actorLabel = actor ? `${actor.displayName}（@${actor.username}）` : "系统";
     this.database.addActivity({
-      description: `${user.displayName} 的账号状态改为「${statusLabel(status)}」`,
+      description: `${actorLabel}将 ${user.displayName} 的账号状态改为「${statusLabel(status)}」`,
       title: "更新了用户状态",
       type: "update",
     });
     return updatedUser;
+  }
+
+  updateProfile(id: string, input: UpdateProfileRequest): AuthUser {
+    const current = this.findRowById(id);
+    if (!current) {
+      throw new NotFoundException("用户不存在");
+    }
+
+    const displayName = input.displayName.trim();
+    const email = input.email.trim().toLowerCase();
+    if (!displayName) {
+      throw new BadRequestException("显示名称不能为空");
+    }
+    const duplicate = this.database.connection
+      .prepare("SELECT id FROM users WHERE lower(email) = lower(?) AND id <> ?")
+      .get(email, id) as { id?: string } | undefined;
+    if (duplicate?.id) {
+      throw new ConflictException("邮箱已存在");
+    }
+
+    const avatar = normalizeAvatar(input.avatar ?? current.avatar);
+    const remark = input.remark?.trim() ?? current.remark;
+    this.database.connection
+      .prepare("UPDATE users SET display_name = ?, email = ?, remark = ?, avatar = ? WHERE id = ?")
+      .run(displayName, email, remark, avatar, id);
+
+    this.database.addActivity({
+      description: `${displayName}（@${current.username}）更新了个人资料`,
+      title: "更新了个人资料",
+      type: "update",
+    });
+    return this.findAuthenticatedUser(id)!.user;
+  }
+
+  updateCurrentPassword(id: string, input: UpdatePasswordRequest): null {
+    const current = this.findRowById(id);
+    if (!current) {
+      throw new NotFoundException("用户不存在");
+    }
+    if (!verifyPassword(input.currentPassword, current.password_hash)) {
+      throw new UnauthorizedException("当前密码不正确");
+    }
+    if (input.currentPassword === input.newPassword) {
+      throw new ConflictException("新密码不能与当前密码相同");
+    }
+    this.updatePassword(id, input.newPassword);
+    return null;
+  }
+
+  updatePassword(id: string, password: string): void {
+    const user = this.findRowById(id);
+    if (!user) {
+      throw new NotFoundException("用户不存在");
+    }
+    const passwordPolicyError = getAccountPasswordPolicyError(password, {
+      role: user.role,
+      username: user.username,
+    });
+    if (passwordPolicyError) {
+      throw new BadRequestException(passwordPolicyError);
+    }
+    this.database.connection
+      .prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+      .run(hashPassword(password), id);
+    this.database.addActivity({
+      description: `成员 ${user.display_name}（@${user.username}）的登录密码已更新`,
+      title: "更新了用户密码",
+      type: "update",
+    });
   }
 
   remove(id: string): null {
@@ -146,6 +248,10 @@ export class UsersService {
       type: "update",
     });
     return null;
+  }
+
+  get(id: string): UserRecord {
+    return this.findById(id);
   }
 
   count(): number {
@@ -205,6 +311,7 @@ export class UsersService {
     displayName: string;
     email: string;
     password: string;
+    remark?: string;
     role: UserRole;
     status: UserStatus;
     username: string;
@@ -223,13 +330,22 @@ export class UsersService {
       throw new ConflictException("邮箱已存在");
     }
 
+    const passwordPolicyError = getAccountPasswordPolicyError(input.password, {
+      role: input.role,
+      username,
+    });
+    if (passwordPolicyError) {
+      throw new BadRequestException(passwordPolicyError);
+    }
+
     const id = randomUUID();
     const now = new Date().toISOString();
     this.database.connection
       .prepare(
         `INSERT INTO users
-          (id, username, display_name, email, password_hash, role, status, created_at, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, username, display_name, email, password_hash, role, status, avatar, remark,
+           created_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -239,6 +355,8 @@ export class UsersService {
         hashPassword(input.password),
         input.role,
         input.status,
+        "",
+        input.remark ?? "",
         now,
         null,
       );
@@ -257,7 +375,8 @@ export class UsersService {
   private findRowById(id: string): UserRow | null {
     const row = this.database.connection
       .prepare(
-        `SELECT id, username, display_name, email, password_hash, role, status, created_at, last_active_at
+        `SELECT id, username, display_name, email, password_hash, role, status, avatar, remark,
+                created_at, last_active_at
          FROM users WHERE id = ?`,
       )
       .get(id) as unknown as UserRow | undefined;
@@ -267,7 +386,8 @@ export class UsersService {
   private findRowByUsername(username: string): UserRow | null {
     const row = this.database.connection
       .prepare(
-        `SELECT id, username, display_name, email, password_hash, role, status, created_at, last_active_at
+        `SELECT id, username, display_name, email, password_hash, role, status, avatar, remark,
+                created_at, last_active_at
          FROM users WHERE username = ?`,
       )
       .get(username.trim()) as unknown as UserRow | undefined;
@@ -277,11 +397,13 @@ export class UsersService {
 
 function toPublicRecord(row: UserRow): UserRecord {
   return {
+    avatar: row.avatar || undefined,
     createdAt: row.created_at.slice(0, 10),
     displayName: row.display_name,
     email: row.email,
     id: row.id,
     lastActiveAt: formatLastActiveAt(row.last_active_at),
+    remark: row.remark,
     role: row.role,
     status: row.status,
     username: row.username,
@@ -290,9 +412,11 @@ function toPublicRecord(row: UserRow): UserRecord {
 
 function toAuthUser(row: UserRow): AuthUser {
   const user: AuthUser = {
+    avatar: row.avatar || undefined,
     displayName: row.display_name,
     email: row.email,
     id: row.id,
+    remark: row.remark,
     role: row.role,
     username: row.username,
   };
@@ -300,6 +424,19 @@ function toAuthUser(row: UserRow): AuthUser {
     user.lastLoginAt = row.last_active_at;
   }
   return user;
+}
+
+function normalizeAvatar(value: unknown): string {
+  if (value === undefined || value === null || value === "") {
+    return "";
+  }
+  if (typeof value !== "string" || value.length > 500_000) {
+    throw new BadRequestException("头像文件过大");
+  }
+  if (!/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) {
+    throw new BadRequestException("头像格式不正确");
+  }
+  return value;
 }
 
 function formatLastActiveAt(value: string | null): string {

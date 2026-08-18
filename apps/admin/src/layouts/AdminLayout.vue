@@ -22,7 +22,19 @@ const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 const collapsed = ref(false);
-const unreadNotificationCount = ref(0);
+const isAdministrator = computed(
+  () => authStore.user?.role === "admin" || authStore.user?.role === "super-admin",
+);
+const roleLabel = computed(() => {
+  switch (authStore.user?.role) {
+    case "super-admin":
+      return "超级管理员";
+    case "admin":
+      return "管理员";
+    default:
+      return "普通成员";
+  }
+});
 
 const activeMenu = computed(() => {
   if (route.path.startsWith("/users")) {
@@ -38,6 +50,7 @@ const activeMenu = computed(() => {
 });
 
 const pageTitle = computed(() => String(route.meta.title ?? "工作台"));
+const unreadNotificationCount = ref(0);
 
 async function handleCommand(command: string) {
   if (command === "profile") {
@@ -51,13 +64,13 @@ async function handleCommand(command: string) {
   }
 }
 
+function toggleSidebar() {
+  collapsed.value = !collapsed.value;
+}
+
 function showNotifications() {
   unreadNotificationCount.value = 0;
   ElMessage.info("暂无新的系统通知");
-}
-
-function toggleSidebar() {
-  collapsed.value = !collapsed.value;
 }
 </script>
 
@@ -79,11 +92,26 @@ function toggleSidebar() {
       </div>
 
       <el-menu class="side-menu" :default-active="activeMenu" :router="true">
+        <div
+          class="menu-section-title"
+          :class="{ 'is-hidden': collapsed }"
+          :aria-hidden="collapsed"
+        >
+          工作台
+        </div>
         <el-menu-item index="/dashboard">
           <el-icon><Odometer /></el-icon>
           <span class="menu-label">工作台</span>
         </el-menu-item>
-        <el-menu-item index="/users">
+
+        <div
+          class="menu-section-title"
+          :class="{ 'is-hidden': collapsed }"
+          :aria-hidden="collapsed"
+        >
+          团队管理
+        </div>
+        <el-menu-item v-if="isAdministrator" index="/users">
           <el-icon><UserFilled /></el-icon>
           <span class="menu-label">用户管理</span>
         </el-menu-item>
@@ -154,14 +182,12 @@ function toggleSidebar() {
           <div class="topbar-divider"></div>
           <el-dropdown trigger="click" @command="handleCommand">
             <button class="user-trigger" type="button">
-              <el-avatar :size="36" class="user-avatar">
+              <el-avatar :size="36" class="user-avatar" :src="authStore.user?.avatar || undefined">
                 {{ authStore.user?.displayName?.slice(0, 1) ?? "A" }}
               </el-avatar>
               <span class="user-trigger__copy">
                 <strong>{{ authStore.user?.displayName ?? "管理员" }}</strong>
-                <small>{{
-                  authStore.user?.role === "super-admin" ? "超级管理员" : "运营成员"
-                }}</small>
+                <small>{{ roleLabel }}</small>
               </span>
               <el-icon class="user-trigger__arrow"><ArrowDown /></el-icon>
             </button>

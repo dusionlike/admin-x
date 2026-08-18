@@ -30,7 +30,7 @@ const router = createRouter({
           path: "users",
           name: "users",
           component: () => import("@/views/UsersView.vue"),
-          meta: { title: "用户管理", requiresAuth: true },
+          meta: { title: "用户管理", requiresAuth: true, adminOnly: true },
         },
         {
           path: "settings",
@@ -55,6 +55,11 @@ const router = createRouter({
   ],
 });
 
+router.afterEach((to) => {
+  const title = String(to.meta.title ?? "管理中心");
+  document.title = `${title} · Admin X 管理后台`;
+});
+
 router.beforeEach((to) => {
   const authStore = useAuthStore();
 
@@ -66,6 +71,14 @@ router.beforeEach((to) => {
   }
 
   if (to.meta.guestOnly && authStore.isAuthenticated) {
+    return { name: "dashboard" };
+  }
+
+  if (
+    to.meta.adminOnly &&
+    authStore.user?.role !== "admin" &&
+    authStore.user?.role !== "super-admin"
+  ) {
     return { name: "dashboard" };
   }
 

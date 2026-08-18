@@ -1,14 +1,31 @@
 import type {
   CreateUserRequest,
+  AuthUser,
   PageResult,
   UpdateUserStatusRequest,
   UserListQuery,
   UserRecord,
+  UpdateProfileRequest,
+  UpdatePasswordRequest,
 } from "@admin-x/shared";
 
 import { requestData } from "./http";
 
 export const usersApi = {
+  updatePassword(payload: UpdatePasswordRequest) {
+    return requestData<null>({
+      data: payload,
+      method: "PATCH",
+      url: "/users/me/password",
+    });
+  },
+  updateProfile(payload: UpdateProfileRequest) {
+    return requestData<AuthUser>({
+      data: payload,
+      method: "PATCH",
+      url: "/users/me",
+    });
+  },
   create(payload: CreateUserRequest) {
     return requestData<UserRecord>({
       data: payload,

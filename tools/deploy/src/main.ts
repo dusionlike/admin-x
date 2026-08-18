@@ -66,16 +66,20 @@ await writeFile(
     "",
     "Start with: node server/main.mjs",
     "",
+    "Copy .env.example to .env and edit the values before starting.",
+    "Existing process environment variables take precedence over .env.",
+    "",
     "Environment variables:",
     "  PORT=3000",
     "  JWT_SECRET=replace-this-in-production",
     "  FRONTEND_ORIGIN=http://localhost:3000",
-    "  DATABASE_PATH=./data/admin-x.sqlite",
+    "  # DATABASE_PATH=/absolute/path/to/data/admin-x.sqlite",
     "",
     "On first launch, open the login page and create the initial super-admin account.",
     "",
   ].join("\n"),
   "utf8",
 );
+await cp(join(rootDir, ".env.example"), join(outputDir, ".env.example"));
 
 console.log(`Standalone deployment package created at ${outputDir}`);

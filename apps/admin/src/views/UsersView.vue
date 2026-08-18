@@ -11,7 +11,7 @@ import type {
   UserStatus,
   UserRecord,
 } from "@admin-x/shared";
-import { getErrorMessage } from "@admin-x/shared";
+import { getAccountPasswordPolicyError, getErrorMessage } from "@admin-x/shared";
 
 import { usersApi } from "@/api/users";
 
@@ -49,7 +49,20 @@ const formRules: FormRules<CreateUserRequest> = {
   ],
   password: [
     { message: "请输入初始密码", required: true, trigger: "blur" },
-    { min: 6, message: "初始密码长度不能少于 6 位", trigger: "blur" },
+    {
+      trigger: "blur",
+      validator: (_rule, value, callback) => {
+        if (!value) {
+          callback();
+          return;
+        }
+        const error = getAccountPasswordPolicyError(String(value), {
+          role: form.role,
+          username: form.username,
+        });
+        callback(error ? new Error(error) : undefined);
+      },
+    },
   ],
   username: [
     { message: "请输入用户名", required: true, trigger: "blur" },
@@ -76,7 +89,7 @@ function statusType(status: UserStatus) {
 function roleLabel(role: UserRole) {
   return {
     admin: "管理员",
-    operator: "运营成员",
+    operator: "普通成员",
     "super-admin": "超级管理员",
   }[role];
 }
@@ -143,11 +156,11 @@ async function handleCreate() {
   formLoading.value = true;
   try {
     await usersApi.create(form);
-    ElMessage.success("用户创建成功");
+    ElMessage.success("成员创建成功");
     dialogVisible.value = false;
     await loadUsers();
   } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "创建用户失败"));
+    ElMessage.error(getErrorMessage(error, "创建成员失败"));
   } finally {
     formLoading.value = false;
   }
@@ -156,27 +169,36 @@ async function handleCreate() {
 async function toggleStatus(row: UserRecord) {
   const nextStatus: UserStatus = row.status === "active" ? "suspended" : "active";
   try {
+    if (nextStatus === "suspended") {
+      await ElMessageBox.confirm(
+        `确定停用“${row.displayName}”吗？停用后该账号将无法登录管理后台。`,
+        "停用账号",
+        { confirmButtonText: "确认停用", cancelButtonText: "取消", type: "warning" },
+      );
+    }
     await usersApi.updateStatus(row.id, { status: nextStatus });
-    ElMessage.success(nextStatus === "active" ? "用户已启用" : "用户已停用");
+    ElMessage.success(nextStatus === "active" ? "成员已启用" : "成员已停用");
     await loadUsers();
   } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "更新用户状态失败"));
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(getErrorMessage(error, "更新成员状态失败"));
+    }
   }
 }
 
 async function removeUser(row: UserRecord) {
   try {
     await ElMessageBox.confirm(
-      `确定要删除用户“${row.displayName}”吗？删除后无法恢复。`,
-      "删除用户",
+      `确定要删除成员“${row.displayName}”吗？删除后无法恢复。`,
+      "删除成员",
       { confirmButtonText: "确认删除", cancelButtonText: "取消", type: "warning" },
     );
     await usersApi.remove(row.id);
-    ElMessage.success("用户已删除");
+    ElMessage.success("成员已删除");
     await loadUsers();
   } catch (error: unknown) {
     if (error !== "cancel" && error !== "close") {
-      ElMessage.error(getErrorMessage(error, "删除用户失败"));
+      ElMessage.error(getErrorMessage(error, "删除成员失败"));
     }
   }
 }
@@ -188,7 +210,7 @@ void loadUsers();
   <div class="users-page">
     <div class="page-heading users-heading">
       <div>
-        <p class="page-kicker">MEMBERS</p>
+        <p class="page-kicker">USERS</p>
         <h1>用户管理</h1>
         <p class="page-description">管理工作区成员、角色和访问状态。</p>
       </div>
@@ -222,7 +244,7 @@ void loadUsers();
             <el-icon><Refresh /></el-icon>重置
           </el-button>
         </div>
-        <span class="users-count">共 {{ pageMeta.total }} 位成员</span>
+        <span class="users-count">共 {{ pageMeta.total }} 位用户</span>
       </div>
 
       <el-table v-loading="loading" class="users-table" :data="tableData" row-key="id">
@@ -232,13 +254,11 @@ void loadUsers();
               <el-avatar :size="36" class="member-avatar">{{
                 row.displayName.slice(0, 1)
               }}</el-avatar>
-              <div>
-                <strong>{{ row.displayName }}</strong>
-                <span>@{{ row.username }}</span>
-              </div>
+              <strong>{{ row.displayName }}</strong>
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="用户名" min-width="150" prop="username" />
         <el-table-column label="邮箱" min-width="210" prop="email" />
         <el-table-column label="角色" min-width="130">
           <template #default="{ row }">{{ roleLabel(row.role) }}</template>
@@ -303,14 +323,18 @@ void loadUsers();
             v-model="form.password"
             type="password"
             show-password
-            placeholder="至少 6 位，用户可用此密码登录"
+            placeholder="至少 8 位，需满足复杂度要求"
           />
         </el-form-item>
+        <p class="password-policy-hint">
+          普通成员密码至少 8 位，管理员密码至少 12
+          位，并包含数字、大小写字母、特殊字符中的至少三类。
+        </p>
         <div class="form-grid">
           <el-form-item label="角色" prop="role">
             <el-select v-model="form.role" class="full-width">
               <el-option label="管理员" value="admin" />
-              <el-option label="运营成员" value="operator" />
+              <el-option label="普通成员" value="operator" />
               <el-option label="超级管理员" value="super-admin" />
             </el-select>
           </el-form-item>
@@ -433,6 +457,7 @@ void loadUsers();
   display: flex;
   align-items: center;
   gap: 10px;
+  white-space: nowrap;
 }
 
 .member-avatar {
@@ -442,21 +467,11 @@ void loadUsers();
   background: var(--ax-primary-soft);
 }
 
-.member-cell > div {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
 .member-cell strong {
   color: var(--ax-content);
   font-size: 12px;
   font-weight: 600;
-}
-
-.member-cell span {
-  color: var(--ax-muted);
-  font-size: 10px;
+  white-space: nowrap;
 }
 
 .users-table :deep(.el-tag) {
@@ -499,6 +514,13 @@ void loadUsers();
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0 14px;
+}
+
+.password-policy-hint {
+  margin: -8px 0 18px;
+  color: var(--ax-muted);
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .full-width {

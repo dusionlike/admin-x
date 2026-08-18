@@ -75,12 +75,14 @@ vp run build
 将整个 `.output` 目录复制到服务器后，在该目录直接运行即可，无需再次安装项目依赖：
 
 ```bash
+cp .env.example .env
+# 编辑 .env 后再启动服务
 node server/main.mjs
 # 或
 pnpm start
 ```
 
-默认端口是 `3000`，可通过 `PORT`、`JWT_SECRET`、`FRONTEND_ORIGIN` 和 `DATABASE_PATH` 配置运行环境。部署包默认把数据库写入 `.output/data/admin-x.sqlite`。浏览器访问同一个服务地址时，前端使用相对路径请求 `/api`，NestJS 会同时托管页面和 API；Vue Router 的页面刷新也会自动回退到 `index.html`。
+默认端口是 `3000`。服务启动时会自动读取运行目录下的 `.env` 文件，也会读取部署包中 `server` 目录旁的 `.env`；已有的系统环境变量优先于 `.env`。可参考根目录的 `.env.example` 配置 `PORT`、`JWT_SECRET`、`FRONTEND_ORIGIN` 和 `DATABASE_PATH` 等变量。部署包默认把数据库写入 `.output/data/admin-x.sqlite`。浏览器访问同一个服务地址时，前端使用相对路径请求 `/api`，NestJS 会同时托管页面和 API；Vue Router 的页面刷新也会自动回退到 `index.html`。
 
 ## 常用命令
 

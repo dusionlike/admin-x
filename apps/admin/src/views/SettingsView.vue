@@ -94,8 +94,8 @@ function saveSettings() {
               <span class="security-item__icon"
                 ><el-icon><Monitor /></el-icon
               ></span>
-              <div><strong>登录设备</strong><span>当前有 1 台设备在线</span></div>
-              <el-button text type="primary">查看设备</el-button>
+              <div><strong>登录记录</strong><span>当前账号的最近登录活动</span></div>
+              <el-button text type="primary">查看记录</el-button>
             </div>
           </div>
         </el-tab-pane>
@@ -128,7 +128,7 @@ function saveSettings() {
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
-  margin-bottom: 26px;
+  margin-bottom: var(--ax-page-heading-gap);
 }
 
 .page-kicker {

@@ -4,6 +4,74 @@ export const DEFAULT_PAGE_SIZE = 10 as const;
 export type UserRole = "super-admin" | "admin" | "operator";
 export type UserStatus = "active" | "invited" | "suspended";
 
+export const ACCOUNT_PASSWORD_MIN_LENGTH = 8 as const;
+export const ADMIN_PASSWORD_MIN_LENGTH = 12 as const;
+
+const COMMON_ACCOUNT_PASSWORDS = new Set([
+  "12345678",
+  "123456789",
+  "admin123",
+  "admin123!",
+  "password123",
+  "qwerty123",
+]);
+
+function hasSequentialRun(value: string): boolean {
+  const normalized = value.toLocaleLowerCase();
+  let ascending = 1;
+  let descending = 1;
+  for (let index = 1; index < normalized.length; index += 1) {
+    const difference = normalized.charCodeAt(index) - normalized.charCodeAt(index - 1);
+    ascending = difference === 1 ? ascending + 1 : 1;
+    descending = difference === -1 ? descending + 1 : 1;
+    if (ascending >= 4 || descending >= 4) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function accountPasswordMinimumLength(role?: UserRole): number {
+  return role === "admin" || role === "super-admin"
+    ? ADMIN_PASSWORD_MIN_LENGTH
+    : ACCOUNT_PASSWORD_MIN_LENGTH;
+}
+
+export function getAccountPasswordPolicyError(
+  password: string,
+  options: { role?: UserRole; username?: string } = {},
+): string | null {
+  const minimumLength = accountPasswordMinimumLength(options.role);
+  if (Array.from(password).length < minimumLength) {
+    return `密码长度不能少于 ${minimumLength} 位`;
+  }
+  if (/\s/u.test(password)) {
+    return "密码不能包含空格或换行";
+  }
+
+  const username = options.username?.trim().toLocaleLowerCase();
+  if (username && password.toLocaleLowerCase().includes(username)) {
+    return "密码不能包含登录用户名";
+  }
+
+  const normalized = password.toLocaleLowerCase();
+  if (COMMON_ACCOUNT_PASSWORDS.has(normalized) || /(.)\1{3,}/u.test(password)) {
+    return "密码过于简单，请避免使用常见口令或重复字符";
+  }
+  if (hasSequentialRun(password)) {
+    return "密码过于简单，请避免使用连续字符";
+  }
+
+  const characterTypes = [/[a-z]/u, /[A-Z]/u, /\d/u, /[^\p{L}\p{N}\s]/u].filter((pattern) =>
+    pattern.test(password),
+  ).length;
+  if (characterTypes < 3) {
+    return "密码至少包含数字、大小写字母、特殊字符中的三类";
+  }
+
+  return null;
+}
+
 export interface ApiResponse<T> {
   code: number;
   message: string;
@@ -30,6 +98,7 @@ export interface AuthUser {
   role: UserRole;
   email?: string;
   avatar?: string;
+  remark?: string;
   lastLoginAt?: string;
 }
 
@@ -100,8 +169,10 @@ export interface UserRecord {
   username: string;
   displayName: string;
   email: string;
+  avatar?: string;
   role: UserRole;
   status: UserStatus;
+  remark?: string;
   createdAt: string;
   lastActiveAt: string;
 }
@@ -120,10 +191,23 @@ export interface CreateUserRequest {
   password: string;
   role: UserRole;
   status?: UserStatus;
+  remark?: string;
 }
 
 export interface UpdateUserStatusRequest {
   status: UserStatus;
+}
+
+export interface UpdateProfileRequest {
+  displayName: string;
+  email: string;
+  remark?: string;
+  avatar?: string;
+}
+
+export interface UpdatePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
 }
 
 export function createApiResponse<T>(data: T, message = "success"): ApiResponse<T> {

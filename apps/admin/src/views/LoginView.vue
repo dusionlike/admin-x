@@ -5,7 +5,7 @@ import { ElMessage, type FormInstance, type FormRules } from "element-plus";
 import { ArrowRight, Lock, Message, User } from "@element-plus/icons-vue";
 
 import type { LoginRequest, SetupAdminRequest } from "@admin-x/shared";
-import { getErrorMessage } from "@admin-x/shared";
+import { getAccountPasswordPolicyError, getErrorMessage } from "@admin-x/shared";
 
 import { authApi } from "@/api/auth";
 import ThemeToggleButton from "@/components/ThemeToggleButton.vue";
@@ -51,14 +51,27 @@ const setupRules: FormRules<SetupForm> = {
       },
     },
   ],
-  displayName: [{ message: "请输入姓名", required: true, trigger: "blur" }],
+  displayName: [{ message: "请输入显示名称", required: true, trigger: "blur" }],
   email: [
     { message: "请输入邮箱", required: true, trigger: "blur" },
     { message: "请输入有效的邮箱地址", type: "email", trigger: "blur" },
   ],
   password: [
     { message: "请输入密码", required: true, trigger: "blur" },
-    { min: 6, message: "密码长度不能少于 6 位", trigger: "blur" },
+    {
+      trigger: "blur",
+      validator: (_rule, value, callback) => {
+        if (!value) {
+          callback();
+          return;
+        }
+        const error = getAccountPasswordPolicyError(String(value), {
+          role: "super-admin",
+          username: setupForm.username,
+        });
+        callback(error ? new Error(error) : undefined);
+      },
+    },
   ],
   username: [
     { message: "请输入用户名", required: true, trigger: "blur" },
@@ -71,7 +84,7 @@ async function loadSetupStatus() {
     const result = await authApi.setupStatus();
     needsSetup.value = result.needsSetup;
   } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "无法读取系统初始化状态"));
+    ElMessage.error(getErrorMessage(error, "无法读取管理中心初始化状态"));
   } finally {
     checkingSetup.value = false;
   }
@@ -95,7 +108,7 @@ async function handleLogin() {
   try {
     await authStore.login(form);
     await redirectToApp();
-    ElMessage.success("欢迎回来，登录成功");
+    ElMessage.success("欢迎回来，已进入 Admin X 管理后台");
   } catch (error: unknown) {
     ElMessage.error(getErrorMessage(error, "登录失败，请检查账号或密码"));
   }
@@ -121,7 +134,7 @@ async function handleSetup() {
     });
     authStore.setSession(result);
     await redirectToApp();
-    ElMessage.success("管理员创建成功，已进入工作台");
+    ElMessage.success("首位管理员创建成功，已进入 Admin X 管理后台");
   } catch (error: unknown) {
     ElMessage.error(getErrorMessage(error, "初始化失败，请稍后重试"));
   } finally {
@@ -147,43 +160,45 @@ onMounted(() => {
         <span>Admin X</span>
       </div>
       <div class="login-intro__content">
-        <p class="eyebrow">FULL-STACK ADMIN CONSOLE</p>
-        <h1>让每一次运营决策，<br /><span>都有数据支撑。</span></h1>
+        <p class="eyebrow">ADMIN CONSOLE</p>
+        <h1>让每一项工作，<br /><span>都能清晰、高效地完成。</span></h1>
         <p class="login-intro__description">
-          面向团队的现代化管理工作台，统一用户、数据和系统服务，让复杂的业务管理变得清晰、顺手。
+          面向团队的 Admin X 管理后台，统一管理成员、数据和系统设置。
         </p>
         <div class="login-highlights">
           <div>
-            <strong>SQLite</strong>
-            <span>真实数据持久化</span>
+            <strong>工作台</strong>
+            <span>快速掌握系统概览</span>
           </div>
           <div>
-            <strong>JWT</strong>
-            <span>安全会话认证</span>
+            <strong>用户管理</strong>
+            <span>维护成员与角色</span>
           </div>
           <div>
-            <strong>Vite+</strong>
-            <span>一体化部署</span>
+            <strong>系统设置</strong>
+            <span>按需配置工作台</span>
           </div>
         </div>
       </div>
-      <div class="login-intro__footer">© 2026 Admin X · Built with Vue, Vite+ & NestJS</div>
+      <div class="login-intro__footer">© 2026 Admin X 管理后台</div>
     </section>
 
     <section class="login-panel">
       <div class="login-card">
         <div class="login-card__heading">
-          <p class="eyebrow">{{ needsSetup ? "FIRST-TIME SETUP" : "WELCOME BACK" }}</p>
-          <h2>{{ needsSetup ? "初始化管理员" : "登录工作台" }}</h2>
+          <p class="eyebrow">{{ needsSetup ? "INITIAL ADMIN SETUP" : "ACCOUNT ACCESS" }}</p>
+          <h2>{{ needsSetup ? "创建首位管理员" : "登录管理中心" }}</h2>
           <p>
             {{
-              needsSetup ? "首次使用，请创建系统管理员账号。" : "输入账号信息，继续管理你的业务。"
+              needsSetup
+                ? "首次使用，请创建首位管理员账号。"
+                : "使用管理员为你创建的账号，继续管理工作台。"
             }}
           </p>
         </div>
 
         <el-form v-if="checkingSetup" class="setup-loading" label-position="top">
-          <p>正在检查系统初始化状态…</p>
+          <p>正在准备 Admin X 管理后台…</p>
         </el-form>
 
         <el-form
@@ -195,24 +210,24 @@ onMounted(() => {
           label-position="top"
           @submit.prevent="handleSetup"
         >
-          <el-form-item label="姓名" prop="displayName">
+          <el-form-item label="显示名称" prop="displayName">
             <el-input v-model="setupForm.displayName" size="large" placeholder="例如：张小明">
               <template #prefix
-                ><el-icon><User /></el-icon
+                ><el-icon> <User /> </el-icon
               ></template>
             </el-input>
           </el-form-item>
           <el-form-item label="用户名" prop="username">
             <el-input v-model="setupForm.username" size="large" placeholder="用于登录的账号">
               <template #prefix
-                ><el-icon><User /></el-icon
+                ><el-icon> <User /> </el-icon
               ></template>
             </el-input>
           </el-form-item>
           <el-form-item label="邮箱" prop="email">
-            <el-input v-model="setupForm.email" size="large" placeholder="name@example.com">
+            <el-input v-model="setupForm.email" size="large" placeholder="name@company.com">
               <template #prefix
-                ><el-icon><Message /></el-icon
+                ><el-icon> <Message /> </el-icon
               ></template>
             </el-input>
           </el-form-item>
@@ -222,13 +237,16 @@ onMounted(() => {
               size="large"
               type="password"
               show-password
-              placeholder="至少 6 位"
+              placeholder="至少 12 位，需满足复杂度要求"
             >
               <template #prefix
-                ><el-icon><Lock /></el-icon
+                ><el-icon> <Lock /> </el-icon
               ></template>
             </el-input>
           </el-form-item>
+          <p class="password-policy-hint">
+            管理员密码至少 12 位，并包含数字、大小写字母、特殊字符中的至少三类。
+          </p>
           <el-form-item label="确认密码" prop="confirmPassword">
             <el-input
               v-model="setupForm.confirmPassword"
@@ -238,7 +256,7 @@ onMounted(() => {
               placeholder="再次输入密码"
             >
               <template #prefix
-                ><el-icon><Lock /></el-icon
+                ><el-icon> <Lock /> </el-icon
               ></template>
             </el-input>
           </el-form-item>
@@ -249,8 +267,10 @@ onMounted(() => {
             native-type="submit"
             :loading="setupLoading"
           >
-            创建管理员并进入
-            <el-icon><ArrowRight /></el-icon>
+            创建管理员并进入管理中心
+            <el-icon>
+              <ArrowRight />
+            </el-icon>
           </el-button>
         </el-form>
 
@@ -264,9 +284,9 @@ onMounted(() => {
           @submit.prevent="handleLogin"
         >
           <el-form-item label="用户名" prop="username">
-            <el-input v-model="form.username" size="large" placeholder="请输入用户名">
+            <el-input v-model="form.username" size="large" placeholder="请输入账号">
               <template #prefix
-                ><el-icon><User /></el-icon
+                ><el-icon> <User /> </el-icon
               ></template>
             </el-input>
           </el-form-item>
@@ -279,7 +299,7 @@ onMounted(() => {
               placeholder="请输入密码"
             >
               <template #prefix
-                ><el-icon><Lock /></el-icon
+                ><el-icon> <Lock /> </el-icon
               ></template>
             </el-input>
           </el-form-item>
@@ -290,13 +310,15 @@ onMounted(() => {
             native-type="submit"
             :loading="authStore.loginLoading"
           >
-            进入工作台
-            <el-icon><ArrowRight /></el-icon>
+            进入管理中心
+            <el-icon>
+              <ArrowRight />
+            </el-icon>
           </el-button>
         </el-form>
       </div>
       <p class="login-panel__tip">
-        {{ needsSetup ? "系统只允许初始化一次管理员账号" : "没有账号？请联系管理员创建" }}
+        {{ needsSetup ? "管理员账号只能初始化一次" : "账号由管理员创建，如需访问请联系系统管理员" }}
       </p>
     </section>
   </div>
@@ -364,7 +386,7 @@ onMounted(() => {
   flex-direction: column;
   justify-content: space-between;
   min-height: 100vh;
-  padding: 54px clamp(40px, 8vw, 128px) 42px;
+  padding: 54px clamp(40px, 6vw, 128px) 42px;
   color: #fff;
   background:
     radial-gradient(circle at 58% 42%, rgb(103 85 232 / 18%), transparent 24%),
@@ -390,18 +412,18 @@ onMounted(() => {
 
 .login-brand .brand-mark {
   display: grid;
+  place-items: center;
   width: 38px;
   height: 38px;
-  place-items: center;
-  color: #fff;
-  font-size: 12px;
-  background: linear-gradient(135deg, #988bf4, #6250de);
   border-radius: 12px;
-  box-shadow: 0 8px 20px rgb(72 56 180 / 40%);
+  color: #fff;
+  font-size: 13px;
+  letter-spacing: -0.06em;
+  background: linear-gradient(135deg, #7c6af2, #5141d8);
+  box-shadow: 0 8px 20px rgb(0 91 188 / 28%);
 }
 
 .login-intro__content {
-  max-width: 570px;
   margin: -40px 0 0;
 }
 
@@ -506,6 +528,13 @@ onMounted(() => {
   margin-bottom: 22px;
 }
 
+.password-policy-hint {
+  margin: -10px 0 22px;
+  color: #8b96a8;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
 .login-form :deep(.el-form-item__label) {
   height: auto;
   padding-bottom: 8px;
@@ -534,6 +563,40 @@ onMounted(() => {
 
 .login-form :deep(.el-input__prefix-inner) {
   color: #a4adbf;
+}
+
+html.dark .login-form :deep(.el-form-item__label) {
+  color: var(--ax-content);
+}
+
+html.dark .password-policy-hint {
+  color: var(--ax-muted);
+}
+
+html.dark .login-form :deep(.el-input__wrapper) {
+  background: var(--ax-surface-muted);
+  border-color: var(--ax-line);
+  box-shadow: 0 0 0 1px var(--ax-line) inset;
+}
+
+html.dark .login-form :deep(.el-input__wrapper.is-focus) {
+  border-color: var(--ax-primary);
+  box-shadow: 0 0 0 3px rgb(155 141 245 / 20%);
+}
+
+html.dark .login-form :deep(.el-input__inner) {
+  color: var(--ax-text);
+  caret-color: var(--ax-primary);
+}
+
+html.dark .login-form :deep(.el-input__inner::placeholder) {
+  color: var(--ax-muted);
+  opacity: 1;
+}
+
+html.dark .login-form :deep(.el-input__prefix-inner),
+html.dark .login-form :deep(.el-input__suffix-inner) {
+  color: var(--ax-muted);
 }
 
 .login-form__options {

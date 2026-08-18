@@ -2,6 +2,7 @@ import { computed, nextTick, ref } from "vue";
 import { defineStore } from "pinia";
 
 const THEME_KEY = "admin-x:theme";
+const SYSTEM_THEME_QUERY = "(prefers-color-scheme: dark)";
 
 type ThemeMode = "light" | "dark";
 
@@ -16,18 +17,46 @@ type ThemeDocument = Document & {
 };
 
 let transitionInProgress = false;
+let systemMediaQuery: MediaQueryList | null = null;
 
 export const useThemeStore = defineStore("theme", () => {
   const mode = ref<ThemeMode>("light");
   const isDark = computed(() => mode.value === "dark");
 
+  function getSystemMode(): ThemeMode {
+    return window.matchMedia(SYSTEM_THEME_QUERY).matches ? "dark" : "light";
+  }
+
+  function applySystemMode(event?: MediaQueryListEvent) {
+    mode.value = event?.matches ? "dark" : getSystemMode();
+    applyTheme();
+  }
+
+  function stopFollowingSystem() {
+    systemMediaQuery?.removeEventListener("change", applySystemMode);
+    systemMediaQuery = null;
+  }
+
+  function followSystem() {
+    stopFollowingSystem();
+    systemMediaQuery = window.matchMedia(SYSTEM_THEME_QUERY);
+    systemMediaQuery.addEventListener("change", applySystemMode);
+  }
+
   function restore() {
     const savedMode = localStorage.getItem(THEME_KEY);
-    mode.value = savedMode === "dark" ? "dark" : "light";
+    if (savedMode === "dark" || savedMode === "light") {
+      stopFollowingSystem();
+      mode.value = savedMode;
+    } else {
+      applySystemMode();
+      followSystem();
+    }
     applyTheme();
   }
 
   function setMode(nextMode: ThemeMode) {
+    stopFollowingSystem();
     mode.value = nextMode;
     localStorage.setItem(THEME_KEY, nextMode);
     applyTheme();

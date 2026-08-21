@@ -5,6 +5,15 @@ import type { ApiResponse } from "@admin-x/shared";
 import { API_PREFIX, unwrapApiResponse } from "@admin-x/shared";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || API_PREFIX;
+let reauthenticationToken = "";
+
+export function clearReauthenticationToken() {
+  reauthenticationToken = "";
+}
+
+export function setReauthenticationToken(token: string) {
+  reauthenticationToken = token;
+}
 
 export const http = axios.create({
   baseURL: apiBaseUrl,
@@ -15,6 +24,9 @@ http.interceptors.request.use((config) => {
   const token = localStorage.getItem("admin-x:token");
   if (token) {
     config.headers.set("Authorization", `Bearer ${token}`);
+  }
+  if (reauthenticationToken) {
+    config.headers.set("X-Admin-X-Reauth", reauthenticationToken);
   }
   return config;
 });

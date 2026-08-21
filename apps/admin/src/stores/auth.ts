@@ -5,6 +5,7 @@ import type { AuthUser, LoginRequest, LoginResponse, Permission } from "@admin-x
 import { hasPermission } from "@admin-x/shared";
 
 import { authApi } from "@/api/auth";
+import { clearReauthenticationToken, setReauthenticationToken } from "@/api/http";
 
 const TOKEN_KEY = "admin-x:token";
 const USER_KEY = "admin-x:user";
@@ -26,6 +27,7 @@ export const useAuthStore = defineStore("auth", () => {
   async function login(payload: LoginRequest) {
     loginLoading.value = true;
     try {
+      clearReauthenticationToken();
       const result = await authApi.login(payload);
       setSession(result);
     } finally {
@@ -34,10 +36,17 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   function setSession(result: LoginResponse) {
+    clearReauthenticationToken();
     token.value = result.token;
     user.value = result.user;
     localStorage.setItem(TOKEN_KEY, result.token);
     localStorage.setItem(USER_KEY, JSON.stringify(result.user));
+  }
+
+  async function reauthenticate(currentPassword: string) {
+    const result = await authApi.reauthenticate(currentPassword);
+    setReauthenticationToken(result.token);
+    return result;
   }
 
   function updateUser(nextUser: AuthUser) {
@@ -45,11 +54,18 @@ export const useAuthStore = defineStore("auth", () => {
     localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
   }
 
-  function logout() {
-    token.value = "";
-    user.value = null;
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+  async function logout() {
+    try {
+      if (token.value) {
+        await authApi.logout();
+      }
+    } finally {
+      clearReauthenticationToken();
+      token.value = "";
+      user.value = null;
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+    }
   }
 
   return {
@@ -58,6 +74,7 @@ export const useAuthStore = defineStore("auth", () => {
     login,
     loginLoading,
     logout,
+    reauthenticate,
     restore,
     setSession,
     token,

@@ -25,10 +25,13 @@ import { createApiResponse } from "@admin-x/shared";
 import { AuthGuard } from "../auth/auth.guard.js";
 import type { AuthenticatedRequest } from "../auth/auth.guard.js";
 import { PermissionGuard, RequirePermissions } from "../auth/permission.guard.js";
+import { getAuditContext } from "../auth/request-context.js";
+import { SensitiveActionGuard } from "../auth/sensitive-action.guard.js";
 import {
   CreateUserDto,
   UpdatePasswordDto,
   UpdateProfileDto,
+  UpdateUserDataScopeDto,
   UpdateUserRoleDto,
   UpdateUserStatusDto,
 } from "./users.dto.js";
@@ -47,13 +50,15 @@ export class UsersController {
   }
 
   @Post()
-  @UseGuards(AuthGuard, PermissionGuard)
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("user:create")
   create(
     @Body() body: CreateUserDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<UserRecord> {
-    return createApiResponse(this.usersService.create(body as CreateUserRequest, request.user));
+    return createApiResponse(
+      this.usersService.create(body as CreateUserRequest, request.user, getAuditContext(request)),
+    );
   }
 
   @Patch("me")
@@ -61,7 +66,9 @@ export class UsersController {
     @Body() body: UpdateProfileDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<AuthUser> {
-    return createApiResponse(this.usersService.updateProfile(request.user.id, body));
+    return createApiResponse(
+      this.usersService.updateProfile(request.user.id, body, getAuditContext(request)),
+    );
   }
 
   @Patch("me/password")
@@ -69,35 +76,54 @@ export class UsersController {
     @Body() body: UpdatePasswordDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<null> {
-    return createApiResponse(this.usersService.updateCurrentPassword(request.user.id, body));
+    return createApiResponse(
+      this.usersService.updateCurrentPassword(request.user.id, body, getAuditContext(request)),
+    );
   }
 
   @Patch(":id/status")
-  @UseGuards(AuthGuard, PermissionGuard)
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("user:status")
   updateStatus(
     @Param("id") id: string,
     @Body() body: UpdateUserStatusDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<UserRecord> {
-    return createApiResponse(this.usersService.updateStatus(id, body.status, request.user));
+    return createApiResponse(
+      this.usersService.updateStatus(id, body.status, request.user, getAuditContext(request)),
+    );
   }
 
   @Patch(":id/role")
-  @UseGuards(AuthGuard, PermissionGuard)
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("role:assign")
   updateRole(
     @Param("id") id: string,
     @Body() body: UpdateUserRoleDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<UserRecord> {
-    return createApiResponse(this.usersService.updateRole(id, body.role, request.user));
+    return createApiResponse(
+      this.usersService.updateRole(id, body.role, request.user, getAuditContext(request)),
+    );
+  }
+
+  @Patch(":id/data-scope")
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
+  @RequirePermissions("security:manage")
+  updateDataScope(
+    @Param("id") id: string,
+    @Body() body: UpdateUserDataScopeDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<UserRecord> {
+    return createApiResponse(
+      this.usersService.updateDataScope(id, body, request.user, getAuditContext(request)),
+    );
   }
 
   @Delete(":id")
-  @UseGuards(AuthGuard, PermissionGuard)
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("user:delete")
   remove(@Param("id") id: string, @Request() request: AuthenticatedRequest): ApiResponse<null> {
-    return createApiResponse(this.usersService.remove(id, request.user));
+    return createApiResponse(this.usersService.remove(id, request.user, getAuditContext(request)));
   }
 }

@@ -6,11 +6,48 @@ export type UserRole =
   | "security-admin"
   | "audit-admin"
   | "business-admin"
-  | "operator";
+  | "operator"
+  | "readonly";
 export type UserStatus = "active" | "invited" | "suspended";
+export type DataScopeType = "all" | "organization" | "department" | "project" | "assigned" | "self";
+
+export interface DataScope {
+  type: DataScopeType;
+  ids: string[];
+}
+
+export interface DataAccessRecord {
+  id: string;
+  ownerId?: string;
+  organizationId?: string;
+  departmentId?: string;
+  projectId?: string;
+}
+
+export function canAccessData(
+  scope: DataScope,
+  actorId: string,
+  record: DataAccessRecord,
+): boolean {
+  switch (scope.type) {
+    case "all":
+      return true;
+    case "self":
+      return record.ownerId === actorId;
+    case "organization":
+      return Boolean(record.organizationId && scope.ids.includes(record.organizationId));
+    case "department":
+      return Boolean(record.departmentId && scope.ids.includes(record.departmentId));
+    case "project":
+      return Boolean(record.projectId && scope.ids.includes(record.projectId));
+    case "assigned":
+      return scope.ids.includes(record.id) || record.ownerId === actorId;
+  }
+}
 
 export type Permission =
   | "dashboard:view"
+  | "analytics:view"
   | "user:read"
   | "user:create"
   | "user:status"
@@ -18,6 +55,9 @@ export type Permission =
   | "role:assign"
   | "security:manage"
   | "audit:read"
+  | "audit:export"
+  | "business:read"
+  | "business:operate"
   | "business:manage"
   | "system:manage";
 
@@ -27,6 +67,7 @@ export interface RoleDefinition {
   description: string;
   responsibilities: string;
   permissions: readonly Permission[];
+  defaultDataScope: DataScopeType;
 }
 
 export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
@@ -36,6 +77,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: "系统管理员",
     permissions: [
       "dashboard:view",
+      "analytics:view",
       "user:read",
       "user:create",
       "user:status",
@@ -43,6 +85,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
       "system:manage",
     ],
     responsibilities: "账号、组织、系统参数、运行维护、备份恢复",
+    defaultDataScope: "all",
   },
   {
     code: "security-admin",
@@ -50,27 +93,45 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: "安全管理员",
     permissions: ["dashboard:view", "user:read", "role:assign", "security:manage"],
     responsibilities: "授权审批、口令策略、访问控制、安全参数",
+    defaultDataScope: "all",
   },
   {
     code: "audit-admin",
     description: "负责审计记录的查询、分析和导出，不得修改业务数据或安全策略。",
     label: "审计管理员",
-    permissions: ["dashboard:view", "audit:read"],
+    permissions: ["dashboard:view", "audit:read", "audit:export"],
     responsibilities: "审计查询、审计分析、审计报告、留痕检查",
+    defaultDataScope: "all",
   },
   {
     code: "business-admin",
     description: "负责业务域配置和业务数据，不得管理账号、授权或审计记录。",
     label: "业务管理员",
-    permissions: ["dashboard:view", "business:manage"],
+    permissions: [
+      "dashboard:view",
+      "analytics:view",
+      "business:read",
+      "business:operate",
+      "business:manage",
+    ],
     responsibilities: "业务配置、业务数据、业务流程和业务报表",
+    defaultDataScope: "all",
   },
   {
     code: "operator",
     description: "按业务需要使用系统，仅能访问被授权的业务功能。",
     label: "普通用户",
-    permissions: ["dashboard:view"],
+    permissions: ["dashboard:view", "analytics:view", "business:read", "business:operate"],
     responsibilities: "日常业务操作和个人资料维护",
+    defaultDataScope: "assigned",
+  },
+  {
+    code: "readonly",
+    description: "仅查看授权范围内的业务数据和报表，不得执行增删改操作。",
+    label: "查询/只读用户",
+    permissions: ["dashboard:view", "analytics:view", "business:read"],
+    responsibilities: "查询、统计、报表和只读核查",
+    defaultDataScope: "assigned",
   },
 ] as const;
 
@@ -128,14 +189,19 @@ function hasSequentialRun(value: string): boolean {
 }
 
 export function accountPasswordMinimumLength(role?: UserRole): number {
-  return role && role !== "operator" ? ADMIN_PASSWORD_MIN_LENGTH : ACCOUNT_PASSWORD_MIN_LENGTH;
+  return role && role !== "operator" && role !== "readonly"
+    ? ADMIN_PASSWORD_MIN_LENGTH
+    : ACCOUNT_PASSWORD_MIN_LENGTH;
 }
 
 export function getAccountPasswordPolicyError(
   password: string,
-  options: { role?: UserRole; username?: string } = {},
+  options: { minimumLength?: number; role?: UserRole; username?: string } = {},
 ): string | null {
-  const minimumLength = accountPasswordMinimumLength(options.role);
+  const minimumLength = Math.max(
+    accountPasswordMinimumLength(options.role),
+    options.minimumLength ?? ACCOUNT_PASSWORD_MIN_LENGTH,
+  );
   if (Array.from(password).length < minimumLength) {
     return `密码长度不能少于 ${minimumLength} 位`;
   }
@@ -190,6 +256,8 @@ export interface AuthUser {
   username: string;
   displayName: string;
   role: UserRole;
+  dataScope: DataScope;
+  mfaEnabled: boolean;
   email?: string;
   avatar?: string;
   remark?: string;
@@ -199,11 +267,21 @@ export interface AuthUser {
 export interface LoginRequest {
   username: string;
   password: string;
+  mfaCode?: string;
 }
 
 export interface LoginResponse {
   token: string;
   user: AuthUser;
+  expiresIn: number;
+}
+
+export interface ReauthenticationRequest {
+  currentPassword: string;
+}
+
+export interface ReauthenticationResponse {
+  token: string;
   expiresIn: number;
 }
 
@@ -287,6 +365,8 @@ export interface UserRecord {
   avatar?: string;
   role: UserRole;
   status: UserStatus;
+  dataScope: DataScope;
+  mfaEnabled: boolean;
   remark?: string;
   createdAt: string;
   lastActiveAt: string;
@@ -321,19 +401,55 @@ export interface AuditRecord {
   id: string;
   actorId?: string;
   actorName: string;
+  actorUsername?: string;
   actorRole?: UserRole;
   action: string;
   resource: string;
+  targetId?: string;
   title: string;
   description: string;
   type: ActivityItem["type"];
+  result: "success" | "failure" | "blocked";
   createdAt: string;
+  ipAddress?: string;
+  userAgent?: string;
+  requestId?: string;
+  before?: unknown;
+  after?: unknown;
+  integrityHash?: string;
 }
 
 export interface AuditListQuery {
   page?: number;
   pageSize?: number;
   keyword?: string;
+  result?: AuditRecord["result"] | "all";
+}
+
+export interface UpdateUserDataScopeRequest {
+  dataScope: DataScope;
+}
+
+export interface SecurityPolicy {
+  passwordMinLength: number;
+  passwordMaxAgeDays: number;
+  loginFailureLimit: number;
+  lockoutMinutes: number;
+  sessionTimeoutMinutes: number;
+  concurrentSessionLimit: number;
+  mfaRequiredForAdministrators: boolean;
+  sensitiveActionReauth: boolean;
+  allowedIpRanges: string[];
+}
+
+export interface MfaStatus {
+  enabled: boolean;
+  configured: boolean;
+}
+
+export interface MfaSetupResponse {
+  secret: string;
+  otpauthUrl: string;
 }
 
 export interface UpdateProfileRequest {

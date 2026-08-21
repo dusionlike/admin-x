@@ -32,7 +32,7 @@ const router = createRouter({
           path: "analytics",
           name: "analytics",
           component: () => import("@/views/AnalyticsView.vue"),
-          meta: { title: "数据分析", requiresAuth: true },
+          meta: { title: "数据分析", requiresAuth: true, permission: "analytics:view" },
         },
         {
           path: "users",

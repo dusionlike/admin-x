@@ -1,12 +1,11 @@
 import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import type { CanActivate, ExecutionContext } from "@nestjs/common";
-import type { Request } from "express";
-
 import type { AuthUser } from "@admin-x/shared";
 
 import { AuthService } from "./auth.service.js";
+import { getAuditContext, type RequestWithId } from "./request-context.js";
 
-export type AuthenticatedRequest = Request & { user: AuthUser };
+export type AuthenticatedRequest = RequestWithId & { user: AuthUser };
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -20,7 +19,7 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException("请先登录");
     }
 
-    request.user = this.authService.authenticate(token);
+    request.user = this.authService.authenticate(token, getAuditContext(request));
     return true;
   }
 }

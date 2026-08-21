@@ -1,6 +1,6 @@
 import type { AuditListQuery, AuditRecord, PageResult } from "@admin-x/shared";
 
-import { requestData } from "./http";
+import { http, requestData } from "./http";
 
 export const auditApi = {
   list(query: AuditListQuery) {
@@ -8,6 +8,12 @@ export const auditApi = {
       method: "GET",
       params: query,
       url: "/audit",
+    });
+  },
+  export(query: AuditListQuery) {
+    return http.get<string>("/audit/export", {
+      params: query,
+      responseType: "text",
     });
   },
 };

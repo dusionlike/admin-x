@@ -5,6 +5,7 @@ import { Plus, Refresh, Search, UserFilled } from "@element-plus/icons-vue";
 
 import type {
   CreateUserRequest,
+  DataScopeType,
   PageMeta,
   UserListQuery,
   UserRole,
@@ -25,8 +26,10 @@ const authStore = useAuthStore();
 const loading = ref(false);
 const dialogVisible = ref(false);
 const roleDialogVisible = ref(false);
+const scopeDialogVisible = ref(false);
 const formLoading = ref(false);
 const roleFormLoading = ref(false);
+const scopeFormLoading = ref(false);
 const tableData = ref<UserRecord[]>([]);
 const formRef = ref<FormInstance>();
 const query = reactive<UserListQuery>({
@@ -54,6 +57,17 @@ const roleForm = reactive<{ displayName: string; id: string; role: UserRole }>({
   id: "",
   role: "operator",
 });
+const scopeForm = reactive<{
+  displayName: string;
+  id: string;
+  ids: string;
+  type: DataScopeType;
+}>({
+  displayName: "",
+  id: "",
+  ids: "",
+  type: "assigned",
+});
 const canCreateUsers = computed(() => authStore.can("user:create"));
 const canManageStatus = computed(() => authStore.can("user:status"));
 const canDeleteUsers = computed(() => authStore.can("user:delete"));
@@ -66,12 +80,46 @@ const canBootstrapSecurityAdmin = computed(
 const canAssignRoles = computed(
   () => authStore.can("role:assign") || canBootstrapSecurityAdmin.value,
 );
+const canManageDataScope = computed(() => authStore.can("security:manage"));
 const availableRoleDefinitions = computed(() => {
   if (canBootstrapSecurityAdmin.value) {
     return ROLE_DEFINITIONS.filter((definition) => definition.code === "security-admin");
   }
   return authStore.can("role:assign") ? ROLE_DEFINITIONS : [];
 });
+
+async function confirmSensitiveAction() {
+  try {
+    const result = await ElMessageBox.prompt(
+      "请输入当前登录密码，以确认这项敏感操作。验证令牌仅在当前页面短时有效。",
+      "敏感操作二次验证",
+      {
+        confirmButtonText: "验证并继续",
+        cancelButtonText: "取消",
+        inputErrorMessage: "当前密码不能为空",
+        inputPlaceholder: "当前登录密码",
+        inputType: "password",
+        inputValidator: (value) => (value.trim() ? true : "当前密码不能为空"),
+        showCancelButton: true,
+      },
+    );
+    await authStore.reauthenticate(result.value);
+    return true;
+  } catch (error: unknown) {
+    if (
+      error === "cancel" ||
+      error === "close" ||
+      (typeof error === "object" &&
+        error !== null &&
+        "action" in error &&
+        ((error as { action?: string }).action === "cancel" ||
+          (error as { action?: string }).action === "close"))
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
 
 const formRules: FormRules<CreateUserRequest> = {
   displayName: [{ message: "请输入姓名", required: true, trigger: "blur" }],
@@ -122,6 +170,17 @@ function roleLabel(role: UserRole) {
   return getRoleDefinition(role).label;
 }
 
+function dataScopeLabel(type: DataScopeType) {
+  return {
+    all: "全部数据",
+    assigned: "指定数据",
+    department: "本部门",
+    organization: "本单位",
+    project: "指定项目",
+    self: "本人数据",
+  }[type];
+}
+
 function resetForm() {
   form.displayName = "";
   form.email = "";
@@ -144,7 +203,44 @@ function openRoleDialog(row: UserRecord) {
   roleDialogVisible.value = true;
 }
 
+function openScopeDialog(row: UserRecord) {
+  scopeForm.displayName = row.displayName;
+  scopeForm.id = row.id;
+  scopeForm.ids = row.dataScope.ids.join("\n");
+  scopeForm.type = row.dataScope.type;
+  scopeDialogVisible.value = true;
+}
+
+async function handleScopeUpdate() {
+  if (!(await confirmSensitiveAction())) {
+    return;
+  }
+  scopeFormLoading.value = true;
+  try {
+    const updated = await usersApi.updateDataScope(scopeForm.id, {
+      dataScope: {
+        ids: scopeForm.ids
+          .split(/\r?\n|,/u)
+          .map((value) => value.trim())
+          .filter(Boolean),
+        type: scopeForm.type,
+      },
+    });
+    const index = tableData.value.findIndex((user) => user.id === updated.id);
+    if (index >= 0) tableData.value[index] = updated;
+    ElMessage.success("数据权限范围已更新");
+    scopeDialogVisible.value = false;
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "更新数据权限失败"));
+  } finally {
+    scopeFormLoading.value = false;
+  }
+}
+
 async function handleRoleUpdate() {
+  if (!(await confirmSensitiveAction())) {
+    return;
+  }
   roleFormLoading.value = true;
   try {
     await usersApi.updateRole(roleForm.id, { role: roleForm.role });
@@ -207,6 +303,9 @@ async function handleCreate() {
   if (!valid) {
     return;
   }
+  if (!(await confirmSensitiveAction())) {
+    return;
+  }
 
   formLoading.value = true;
   try {
@@ -231,6 +330,9 @@ async function toggleStatus(row: UserRecord) {
         { confirmButtonText: "确认停用", cancelButtonText: "取消", type: "warning" },
       );
     }
+    if (!(await confirmSensitiveAction())) {
+      return;
+    }
     await usersApi.updateStatus(row.id, { status: nextStatus });
     ElMessage.success(nextStatus === "active" ? "成员已启用" : "成员已停用");
     await loadUsers();
@@ -248,6 +350,9 @@ async function removeUser(row: UserRecord) {
       "删除成员",
       { confirmButtonText: "确认删除", cancelButtonText: "取消", type: "warning" },
     );
+    if (!(await confirmSensitiveAction())) {
+      return;
+    }
     await usersApi.remove(row.id);
     ElMessage.success("成员已删除");
     await loadUsers();
@@ -325,12 +430,24 @@ void loadUsers();
             }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="数据范围" min-width="125">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ dataScopeLabel(row.dataScope.type) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="MFA" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.mfaEnabled ? 'success' : 'info'" size="small" effect="plain">
+              {{ row.mfaEnabled ? "已绑定" : "未绑定" }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="最近活跃" min-width="150" prop="lastActiveAt" />
         <el-table-column
-          v-if="canManageStatus || canDeleteUsers || canAssignRoles"
+          v-if="canManageStatus || canDeleteUsers || canAssignRoles || canManageDataScope"
           fixed="right"
           label="操作"
-          width="260"
+          width="340"
         >
           <template #default="{ row }">
             <div class="user-actions">
@@ -339,6 +456,14 @@ void loadUsers();
               </el-button>
               <el-button v-if="canAssignRoles" text type="primary" @click="openRoleDialog(row)">
                 分配角色
+              </el-button>
+              <el-button
+                v-if="canManageDataScope"
+                text
+                type="primary"
+                @click="openScopeDialog(row)"
+              >
+                数据范围
               </el-button>
               <el-button v-if="canDeleteUsers" text type="danger" @click="removeUser(row)">
                 删除
@@ -408,7 +533,8 @@ void loadUsers();
               class="full-width"
               @change="handleInitialRoleChange"
             >
-              <el-option label="普通用户" value="operator" />
+              <el-option label="普通业务用户" value="operator" />
+              <el-option label="查询/只读用户" value="readonly" />
               <el-option label="安全管理员（首次初始化）" value="security-admin" />
             </el-select>
             <div v-else class="role-init-copy">
@@ -459,6 +585,50 @@ void loadUsers();
         <el-button @click="roleDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="roleFormLoading" @click="handleRoleUpdate">
           保存角色
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="scopeDialogVisible" title="配置数据权限范围" width="480px" destroy-on-close>
+      <p class="role-dialog-copy">
+        正在调整「{{
+          scopeForm.displayName
+        }}」的数据范围。范围由后端接口执行过滤，保存后会使该账号的旧会话失效。
+      </p>
+      <el-form label-position="top">
+        <el-form-item label="数据范围">
+          <el-select v-model="scopeForm.type" class="full-width">
+            <el-option
+              v-for="(label, value) in {
+                all: '全部数据',
+                organization: '本单位',
+                department: '本部门',
+                project: '指定项目',
+                assigned: '指定数据',
+                self: '本人数据',
+              }"
+              :key="value"
+              :label="label"
+              :value="value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item
+          v-if="!['all', 'self'].includes(scopeForm.type)"
+          label="范围编号（每行一个，也可用逗号分隔）"
+        >
+          <el-input
+            v-model="scopeForm.ids"
+            type="textarea"
+            :rows="4"
+            placeholder="例如：广东省&#10;广州项目-01"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="scopeDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="scopeFormLoading" @click="handleScopeUpdate">
+          保存范围
         </el-button>
       </template>
     </el-dialog>

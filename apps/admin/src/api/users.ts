@@ -7,6 +7,7 @@ import type {
   UserRecord,
   UpdateProfileRequest,
   UpdatePasswordRequest,
+  UpdateUserDataScopeRequest,
   UpdateUserRoleRequest,
 } from "@admin-x/shared";
 
@@ -52,6 +53,13 @@ export const usersApi = {
       data: payload,
       method: "PATCH",
       url: `/users/${id}/role`,
+    });
+  },
+  updateDataScope(id: string, payload: UpdateUserDataScopeRequest) {
+    return requestData<UserRecord>({
+      data: payload,
+      method: "PATCH",
+      url: `/users/${id}/data-scope`,
     });
   },
   updateStatus(id: string, payload: UpdateUserStatusRequest) {

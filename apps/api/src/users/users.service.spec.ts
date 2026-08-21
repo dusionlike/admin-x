@@ -262,3 +262,41 @@ test("updates the current password only after verifying the old password", () =>
   expect(credentials && verifyPassword("NewPass123!!", credentials.passwordHash)).toBe(true);
   database.onModuleDestroy();
 });
+
+test("stores audit context and prevents audit records from being changed or deleted", () => {
+  const database = new DatabaseService(":memory:");
+  database.addActivity({
+    action: "test.audit",
+    after: { status: "active" },
+    before: { status: "invited" },
+    context: {
+      ipAddress: "192.168.1.25",
+      requestId: "audit-test-request",
+      userAgent: "test-agent",
+    },
+    description: "审计完整性测试",
+    result: "success",
+    title: "审计完整性测试",
+    type: "update",
+    resource: "test",
+    targetId: "target-1",
+  });
+
+  const row = database.connection
+    .prepare("SELECT ip_address, before_json, after_json, integrity_hash FROM activity_logs")
+    .get() as {
+    after_json?: string;
+    before_json?: string;
+    integrity_hash?: string;
+    ip_address?: string;
+  };
+  expect(row.ip_address).toBe("192.168.1.25");
+  expect(row.before_json).toContain("invited");
+  expect(row.after_json).toContain("active");
+  expect(row.integrity_hash).toHaveLength(64);
+  expect(() => database.connection.exec("UPDATE activity_logs SET title = 'tampered'")).toThrow(
+    "append-only",
+  );
+  expect(() => database.connection.exec("DELETE FROM activity_logs")).toThrow("append-only");
+  database.onModuleDestroy();
+});

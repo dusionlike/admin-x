@@ -1,7 +1,13 @@
 import { Inject, Injectable } from "@nestjs/common";
 
-import { ROLE_DEFINITIONS } from "@admin-x/shared";
-import type { AnalyticsOverview, DashboardOverview, TrendItem } from "@admin-x/shared";
+import { hasPermission, ROLE_DEFINITIONS } from "@admin-x/shared";
+import type {
+  AnalyticsOverview,
+  AuthUser,
+  DashboardOverview,
+  Permission,
+  TrendItem,
+} from "@admin-x/shared";
 
 import { DatabaseService } from "../database/database.service.js";
 import { UsersService } from "../users/users.service.js";
@@ -13,15 +19,38 @@ export class DashboardService {
     @Inject(UsersService) private readonly usersService: UsersService,
   ) {}
 
-  getOverview(): DashboardOverview {
+  getOverview(actor: AuthUser): DashboardOverview {
     const today = new Date();
     const todayStart = `${dayKey(today)}T00:00:00.000Z`;
     const trendStart = new Date(today.getTime() - 6 * DAY_IN_MILLISECONDS).toISOString();
-    const dailyVisits = this.database.getDailyVisits(trendStart);
+    const canReadUsers = hasPermission(actor.role, "user:read");
+    const visitUserId =
+      canReadUsers || hasPermission(actor.role, "audit:read") ? undefined : actor.id;
+    const dailyVisits = this.database.getDailyVisits(trendStart, visitUserId);
     const trend = buildTrend(today, dailyVisits);
-
-    return {
-      metrics: [
+    const metrics: DashboardOverview["metrics"] = [
+      {
+        color: "#3a9de8",
+        icon: "visits",
+        key: "visits",
+        label: visitUserId ? "我的访问" : "今日访问",
+        trend: 0,
+        trendLabel: visitUserId ? "个人登录记录" : "登录记录",
+        value: this.database.getVisitCount(todayStart, visitUserId),
+      },
+      {
+        color: "#edaa47",
+        icon: "health",
+        key: "health",
+        label: "服务健康度",
+        suffix: "%",
+        trend: 0,
+        trendLabel: "SQLite 连接",
+        value: this.database.isHealthy() ? 100 : 0,
+      },
+    ];
+    if (canReadUsers) {
+      metrics.unshift(
         {
           color: "#6755e8",
           icon: "users",
@@ -33,15 +62,6 @@ export class DashboardService {
           value: this.usersService.count(),
         },
         {
-          color: "#3a9de8",
-          icon: "visits",
-          key: "visits",
-          label: "今日访问",
-          trend: 0,
-          trendLabel: "登录记录",
-          value: this.database.getVisitCount(todayStart),
-        },
-        {
           color: "#39b993",
           icon: "active",
           key: "active",
@@ -50,23 +70,18 @@ export class DashboardService {
           trendLabel: "当前启用",
           value: this.usersService.countByStatus("active"),
         },
-        {
-          color: "#edaa47",
-          icon: "health",
-          key: "health",
-          label: "服务健康度",
-          suffix: "%",
-          trend: 0,
-          trendLabel: "SQLite 连接",
-          value: this.database.isHealthy() ? 100 : 0,
-        },
-      ],
+      );
+    }
+
+    return {
+      metrics,
       quickActions: [
         {
           color: "#6755e8",
           description: "管理工作区成员",
           icon: "users",
           key: "users",
+          permission: "user:read",
           route: "/users",
           title: "用户管理",
         },
@@ -75,6 +90,7 @@ export class DashboardService {
           description: "查看业务数据走势",
           icon: "visits",
           key: "analytics",
+          permission: "analytics:view",
           route: "/analytics",
           title: "数据分析",
         },
@@ -83,49 +99,61 @@ export class DashboardService {
           description: "查看角色权限边界",
           icon: "health",
           key: "health",
+          permission: "security:manage",
           route: "/security",
           title: "安全中心",
         },
-      ],
-      recentActivity: this.database.getRecentActivities(10).map((activity) => ({
-        description: activity.description,
-        id: activity.id,
-        time: formatActivityTime(activity.createdAt),
-        title: activity.title,
-        type: activity.type,
-      })),
+      ]
+        .filter((action) => hasPermission(actor.role, action.permission as Permission))
+        .map(({ permission: _permission, ...action }) => action),
+      recentActivity: this.database
+        .getRecentActivities(10, hasPermission(actor.role, "audit:read") ? undefined : actor.id)
+        .map((activity) => ({
+          description: activity.description,
+          id: activity.id,
+          time: formatActivityTime(activity.createdAt),
+          title: activity.title,
+          type: activity.type,
+        })),
       trend,
     };
   }
 
-  getAnalytics(): AnalyticsOverview {
+  getAnalytics(actor: AuthUser): AnalyticsOverview {
     const today = new Date();
     const trendStart = new Date(today.getTime() - 6 * DAY_IN_MILLISECONDS).toISOString();
-    const trend = buildTrend(today, this.database.getDailyVisits(trendStart));
+    const canReadUsers = hasPermission(actor.role, "user:read");
+    const visitUserId =
+      canReadUsers || hasPermission(actor.role, "audit:read") ? undefined : actor.id;
+    const trend = buildTrend(today, this.database.getDailyVisits(trendStart, visitUserId));
     const totalVisits = trend.reduce((sum, item) => sum + item.value, 0);
     const peakDay = trend.reduce(
       (peak, item) => (item.value > peak.value ? item : peak),
       trend[0] ?? { label: dayKey(today), value: 0 },
     );
-    const roleCounts = this.countBy("role");
-    const statusCounts = this.countBy("status");
+    const roleCounts = canReadUsers ? this.countBy("role") : new Map<string, number>();
+    const statusCounts = canReadUsers ? this.countBy("status") : new Map<string, number>();
 
     return {
-      roleDistribution: ROLE_DEFINITIONS.map((definition) => ({
-        key: definition.code,
-        label: definition.label,
-        value: roleCounts.get(definition.code) ?? 0,
-      })),
-      statusDistribution: [
-        { key: "active", label: "正常", value: statusCounts.get("active") ?? 0 },
-        { key: "invited", label: "待激活", value: statusCounts.get("invited") ?? 0 },
-        { key: "suspended", label: "已停用", value: statusCounts.get("suspended") ?? 0 },
-      ],
+      roleDistribution: canReadUsers
+        ? ROLE_DEFINITIONS.map((definition) => ({
+            key: definition.code,
+            label: definition.label,
+            value: roleCounts.get(definition.code) ?? 0,
+          }))
+        : [],
+      statusDistribution: canReadUsers
+        ? [
+            { key: "active", label: "正常", value: statusCounts.get("active") ?? 0 },
+            { key: "invited", label: "待激活", value: statusCounts.get("invited") ?? 0 },
+            { key: "suspended", label: "已停用", value: statusCounts.get("suspended") ?? 0 },
+          ]
+        : [],
       summary: {
-        activeUsers: this.usersService.countByStatus("active"),
+        activeUsers: canReadUsers ? this.usersService.countByStatus("active") : 0,
         averageDailyVisits: Number((totalVisits / 7).toFixed(1)),
         peakDay,
-        totalUsers: this.usersService.count(),
+        totalUsers: canReadUsers ? this.usersService.count() : 0,
         totalVisits,
       },
       trend,

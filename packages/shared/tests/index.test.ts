@@ -1,6 +1,7 @@
 import { expect, test } from "vite-plus/test";
 
 import {
+  canAccessData,
   createPageMeta,
   getAccountPasswordPolicyError,
   hasPermission,
@@ -65,4 +66,31 @@ test("keeps the four administrator boundaries separate", () => {
   expect(hasPermission("audit-admin", "user:delete")).toBe(false);
   expect(hasPermission("business-admin", "business:manage")).toBe(true);
   expect(hasPermission("business-admin", "role:assign")).toBe(false);
+});
+
+test("applies data scope independently from menu permissions", () => {
+  expect(
+    canAccessData({ ids: [], type: "all" }, "user-1", {
+      departmentId: "department-9",
+      id: "record-1",
+    }),
+  ).toBe(true);
+  expect(
+    canAccessData({ ids: ["department-9"], type: "department" }, "user-1", {
+      departmentId: "department-9",
+      id: "record-1",
+    }),
+  ).toBe(true);
+  expect(
+    canAccessData({ ids: ["record-2"], type: "assigned" }, "user-1", {
+      id: "record-1",
+      ownerId: "user-2",
+    }),
+  ).toBe(false);
+  expect(
+    canAccessData({ ids: [], type: "self" }, "user-1", {
+      id: "record-1",
+      ownerId: "user-1",
+    }),
+  ).toBe(true);
 });

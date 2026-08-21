@@ -1,17 +1,26 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { computed, onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
+import { ElMessage, ElMessageBox } from "element-plus";
 import type { FormInstance, FormRules } from "element-plus";
 import { ArrowRight, Camera, Lock, Message, Setting, UserFilled } from "@element-plus/icons-vue";
 
-import type { UpdatePasswordRequest, UpdateProfileRequest, UserRole } from "@admin-x/shared";
-import { getAccountPasswordPolicyError, getRoleDefinition } from "@admin-x/shared";
+import type {
+  MfaSetupResponse,
+  MfaStatus,
+  UpdatePasswordRequest,
+  UpdateProfileRequest,
+  UserRole,
+} from "@admin-x/shared";
+import { getAccountPasswordPolicyError, getErrorMessage, getRoleDefinition } from "@admin-x/shared";
 
 import { usersApi } from "@/api/users";
+import { authApi } from "@/api/auth";
 import AvatarCropDialog from "@/components/AvatarCropDialog.vue";
 import { useAuthStore } from "@/stores/auth";
 
 const authStore = useAuthStore();
+const router = useRouter();
 const profile = computed(() => authStore.user);
 const initials = computed(() => profile.value?.displayName.slice(0, 1) ?? "A");
 const roleName = computed(() => roleLabel(profile.value?.role));
@@ -22,6 +31,13 @@ const cropSource = ref("");
 const saving = ref(false);
 const passwordSaving = ref(false);
 const passwordVisible = ref(false);
+const mfaVisible = ref(false);
+const mfaLoading = ref(false);
+const mfaEnabling = ref(false);
+const mfaPassword = ref("");
+const mfaCode = ref("");
+const mfaSetup = ref<MfaSetupResponse | null>(null);
+const mfaStatus = ref<MfaStatus>({ configured: false, enabled: false });
 const avatarInput = ref<HTMLInputElement>();
 const formRef = ref<FormInstance>();
 const passwordFormRef = ref<FormInstance>();
@@ -107,6 +123,81 @@ function openEdit() {
   editVisible.value = true;
 }
 
+async function loadMfaStatus() {
+  try {
+    mfaStatus.value = await authApi.mfaStatus();
+  } catch {
+    // The account page remains usable if an older API does not expose MFA yet.
+  }
+}
+
+function openMfaDialog() {
+  mfaPassword.value = "";
+  mfaCode.value = "";
+  mfaSetup.value = null;
+  mfaVisible.value = true;
+}
+
+async function beginMfaSetup() {
+  if (!mfaPassword.value) {
+    ElMessage.warning("请输入当前密码");
+    return;
+  }
+  mfaLoading.value = true;
+  try {
+    mfaSetup.value = await authApi.setupMfa(mfaPassword.value);
+    ElMessage.success("MFA 密钥已生成，请用认证器扫描或手动录入");
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "MFA 配置生成失败"));
+  } finally {
+    mfaLoading.value = false;
+  }
+}
+
+async function enableMfa() {
+  if (!mfaSetup.value || !/^\d{6}$/.test(mfaCode.value)) {
+    ElMessage.warning("请输入认证器当前显示的 6 位验证码");
+    return;
+  }
+  mfaEnabling.value = true;
+  try {
+    const status = await authApi.enableMfa(mfaCode.value);
+    mfaStatus.value = status;
+    if (authStore.user) authStore.updateUser({ ...authStore.user, mfaEnabled: status.enabled });
+    mfaVisible.value = false;
+    ElMessage.success("MFA 多因素认证已启用");
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "MFA 启用失败"));
+  } finally {
+    mfaEnabling.value = false;
+  }
+}
+
+async function disableMfa() {
+  try {
+    const passwordPrompt = await ElMessageBox.prompt("请输入当前登录密码", "停用 MFA", {
+      inputType: "password",
+      inputPlaceholder: "当前密码",
+      confirmButtonText: "继续",
+      cancelButtonText: "取消",
+    });
+    const codePrompt = await ElMessageBox.prompt("请输入认证器当前的 6 位验证码", "验证 MFA", {
+      inputPattern: /^\d{6}$/,
+      inputErrorMessage: "请输入 6 位数字验证码",
+      confirmButtonText: "确认停用",
+      cancelButtonText: "取消",
+    });
+    const status = await authApi.disableMfa(passwordPrompt.value, codePrompt.value);
+    mfaStatus.value = status;
+    if (authStore.user) authStore.updateUser({ ...authStore.user, mfaEnabled: status.enabled });
+    ElMessage.success("MFA 已停用");
+  } catch (error: unknown) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(getErrorMessage(error, "MFA 停用失败"));
+    }
+  }
+}
+
 function chooseAvatar() {
   avatarInput.value?.click();
 }
@@ -166,11 +257,17 @@ async function savePassword() {
       newPassword: passwordForm.newPassword,
     });
     passwordVisible.value = false;
-    ElMessage.success("登录密码已更新");
+    ElMessage.success("登录密码已更新，请使用新密码重新登录");
+    await authStore.logout().catch(() => undefined);
+    await router.push({ name: "login" });
   } finally {
     passwordSaving.value = false;
   }
 }
+
+onMounted(() => {
+  void loadMfaStatus();
+});
 </script>
 
 <template>
@@ -259,12 +356,59 @@ async function savePassword() {
       </div>
       <div>
         <h2>账号安全</h2>
-        <p>定期检查密码和登录记录，保护管理账号安全。</p>
+        <p>定期检查密码、MFA 和登录记录，保护管理账号安全。</p>
       </div>
-      <el-button text type="primary" @click="openPasswordDialog">
-        修改登录密码 <el-icon><ArrowRight /></el-icon>
-      </el-button>
+      <div class="profile-security-actions">
+        <el-button text type="primary" @click="openPasswordDialog">
+          修改登录密码 <el-icon><ArrowRight /></el-icon>
+        </el-button>
+        <el-button v-if="!mfaStatus.enabled" text type="primary" @click="openMfaDialog">
+          绑定 MFA <el-icon><ArrowRight /></el-icon>
+        </el-button>
+        <el-button v-else text type="danger" @click="disableMfa">停用 MFA</el-button>
+      </div>
     </el-card>
+
+    <el-dialog
+      v-model="mfaVisible"
+      title="绑定 MFA 多因素认证"
+      width="min(520px, calc(100vw - 32px))"
+    >
+      <el-alert
+        v-if="!mfaSetup"
+        title="绑定后登录需要账号密码和认证器动态验证码"
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <el-form label-position="top">
+        <el-form-item label="当前密码">
+          <el-input
+            v-model="mfaPassword"
+            type="password"
+            show-password
+            autocomplete="current-password"
+            placeholder="先验证当前密码"
+            :disabled="Boolean(mfaSetup)"
+          />
+        </el-form-item>
+      </el-form>
+      <div v-if="mfaSetup" class="mfa-setup-result">
+        <p>请在认证器中新增以下账户，然后输入当前 6 位验证码完成绑定。</p>
+        <code>{{ mfaSetup.secret }}</code>
+        <el-input v-model="mfaSetup.otpauthUrl" readonly />
+        <el-input v-model="mfaCode" maxlength="6" placeholder="认证器验证码" />
+      </div>
+      <template #footer>
+        <el-button @click="mfaVisible = false">取消</el-button>
+        <el-button v-if="!mfaSetup" type="primary" :loading="mfaLoading" @click="beginMfaSetup">
+          生成绑定密钥
+        </el-button>
+        <el-button v-else type="primary" :loading="mfaEnabling" @click="enableMfa">
+          确认启用 MFA
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="editVisible"
@@ -596,6 +740,34 @@ async function savePassword() {
 }
 .profile-security-card p {
   margin: 5px 0 0;
+}
+.profile-security-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.mfa-setup-result {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--ax-line-soft);
+  border-radius: 10px;
+  background: var(--ax-surface-soft);
+}
+.mfa-setup-result p {
+  margin: 0;
+  color: var(--ax-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mfa-setup-result code {
+  padding: 8px 10px;
+  color: var(--ax-heading);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  background: var(--ax-surface);
 }
 .edit-profile {
   margin-top: -4px;

@@ -22,6 +22,7 @@ const checkingSetup = ref(true);
 const needsSetup = ref(false);
 const setupLoading = ref(false);
 const form = reactive<LoginRequest>({
+  mfaCode: "",
   password: "",
   username: "",
 });
@@ -38,6 +39,7 @@ const loginRules: FormRules<LoginRequest> = {
     { message: "请输入密码", required: true, trigger: "blur" },
     { min: 6, message: "密码长度不能少于 6 位", trigger: "blur" },
   ],
+  mfaCode: [{ pattern: /^\d{6}$/, message: "MFA 验证码应为 6 位数字", trigger: "blur" }],
   username: [{ message: "请输入用户名", required: true, trigger: "blur" }],
 };
 
@@ -243,6 +245,14 @@ onMounted(() => {
                 ><el-icon> <Lock /> </el-icon
               ></template>
             </el-input>
+          </el-form-item>
+          <el-form-item label="MFA 验证码（已绑定时填写）" prop="mfaCode">
+            <el-input
+              v-model="form.mfaCode"
+              size="large"
+              maxlength="6"
+              placeholder="绑定 MFA 的账号请输入 6 位动态验证码"
+            />
           </el-form-item>
           <p class="password-policy-hint">
             管理员密码至少 12 位，并包含数字、大小写字母、特殊字符中的至少三类。

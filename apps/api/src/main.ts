@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import "reflect-metadata";
 
+import { randomUUID } from "node:crypto";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
@@ -16,6 +17,7 @@ import * as classValidator from "class-validator";
 import { API_PREFIX } from "@admin-x/shared";
 
 import { AppModule } from "./app.module.js";
+import type { RequestWithId } from "./auth/request-context.js";
 
 if (!process.env.DATABASE_PATH?.trim()) {
   process.env.DATABASE_PATH = fileURLToPath(new URL("../data/admin-x.sqlite", import.meta.url));
@@ -23,6 +25,15 @@ if (!process.env.DATABASE_PATH?.trim()) {
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  app.use((request: RequestWithId, response: Response, next: NextFunction) => {
+    const requestId = String(request.headers["x-request-id"] ?? randomUUID()).slice(0, 100);
+    request.requestId = requestId;
+    response.setHeader("X-Request-Id", requestId);
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    next();
+  });
   app.useBodyParser("json", { limit: "1mb" });
   app.useBodyParser("urlencoded", { limit: "1mb" });
   const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? "http://localhost:5173")

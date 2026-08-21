@@ -24,6 +24,7 @@ const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 const collapsed = ref(false);
+const canViewAnalytics = computed(() => authStore.can("analytics:view"));
 const canViewUsers = computed(() => authStore.can("user:read"));
 const canManageSecurity = computed(() => authStore.can("security:manage"));
 const canViewAudit = computed(() => authStore.can("audit:read"));
@@ -60,7 +61,7 @@ async function handleCommand(command: string) {
   }
 
   if (command === "logout") {
-    authStore.logout();
+    await authStore.logout().catch(() => undefined);
     await router.push({ name: "login" });
   }
 }
@@ -124,7 +125,7 @@ function showNotifications() {
         >
           数据与服务
         </div>
-        <el-menu-item index="/analytics">
+        <el-menu-item v-if="canViewAnalytics" index="/analytics">
           <el-icon><DataAnalysis /></el-icon>
           <span class="menu-label">数据分析</span>
         </el-menu-item>

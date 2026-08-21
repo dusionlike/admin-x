@@ -14,6 +14,7 @@ const roleColors: Record<string, string> = {
   "audit-admin": "#edaa47",
   "business-admin": "#39b993",
   operator: "#93a3bb",
+  readonly: "#b07bec",
   "security-admin": "#3a9de8",
   "system-admin": "#6755e8",
 };

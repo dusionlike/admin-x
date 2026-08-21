@@ -2,6 +2,7 @@ import {
   IsEmail,
   IsEnum,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -12,6 +13,7 @@ import type {
   CreateUserRequest,
   UpdatePasswordRequest,
   UpdateProfileRequest,
+  UpdateUserDataScopeRequest,
   UpdateUserRoleRequest,
   UserRole,
   UserStatus,
@@ -30,9 +32,12 @@ export class CreateUserDto implements CreateUserRequest {
   @MinLength(8, { message: "初始密码长度不能少于 8 位" })
   password!: string;
 
-  @IsEnum(["system-admin", "security-admin", "audit-admin", "business-admin", "operator"], {
-    message: "角色不合法",
-  })
+  @IsEnum(
+    ["system-admin", "security-admin", "audit-admin", "business-admin", "operator", "readonly"],
+    {
+      message: "角色不合法",
+    },
+  )
   role!: UserRole;
 
   @IsEnum(["active", "invited", "suspended"], { message: "状态不合法" })
@@ -43,6 +48,11 @@ export class CreateUserDto implements CreateUserRequest {
   @IsString({ message: "用户名必须是字符串" })
   @MinLength(3, { message: "用户名至少 3 个字符" })
   username!: string;
+
+  @IsOptional()
+  @IsString({ message: "备注必须是字符串" })
+  @MaxLength(200, { message: "备注不能超过 200 个字符" })
+  remark?: string;
 }
 
 export class UpdateUserStatusDto {
@@ -51,10 +61,18 @@ export class UpdateUserStatusDto {
 }
 
 export class UpdateUserRoleDto implements UpdateUserRoleRequest {
-  @IsEnum(["system-admin", "security-admin", "audit-admin", "business-admin", "operator"], {
-    message: "角色不合法",
-  })
+  @IsEnum(
+    ["system-admin", "security-admin", "audit-admin", "business-admin", "operator", "readonly"],
+    {
+      message: "角色不合法",
+    },
+  )
   role!: UserRole;
+}
+
+export class UpdateUserDataScopeDto implements UpdateUserDataScopeRequest {
+  @IsObject({ message: "数据权限范围格式不正确" })
+  dataScope!: UpdateUserDataScopeRequest["dataScope"];
 }
 
 export class UpdateProfileDto implements UpdateProfileRequest {

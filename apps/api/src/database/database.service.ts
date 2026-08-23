@@ -10,8 +10,11 @@ import type {
   ActivityItem,
   AuditRecord,
   AuthUser,
+  BackupRecord,
+  BackupTarget,
   SecurityPolicy,
   UserRole,
+  VulnerabilityScanRecord,
 } from "@admin-x/shared";
 
 export interface AuditContext {
@@ -64,6 +67,7 @@ const SCHEMA = `
     locked_until TEXT,
     session_version INTEGER NOT NULL DEFAULT 0,
     password_changed_at TEXT NOT NULL DEFAULT '',
+    privacy_notice_accepted_at TEXT NOT NULL DEFAULT '',
     last_login_ip TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     last_active_at TEXT
@@ -109,7 +113,7 @@ const SCHEMA = `
     password_min_length INTEGER NOT NULL DEFAULT 8,
     password_max_age_days INTEGER NOT NULL DEFAULT 90,
     login_failure_limit INTEGER NOT NULL DEFAULT 5,
-    lockout_minutes INTEGER NOT NULL DEFAULT 15,
+    lockout_minutes INTEGER NOT NULL DEFAULT 30,
     session_timeout_minutes INTEGER NOT NULL DEFAULT 30,
     concurrent_session_limit INTEGER NOT NULL DEFAULT 1,
     mfa_required_admin INTEGER NOT NULL DEFAULT 0,
@@ -130,6 +134,38 @@ const SCHEMA = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS backup_records (
+    id TEXT PRIMARY KEY,
+    target TEXT NOT NULL CHECK (target IN ('local', 'remote')),
+    status TEXT NOT NULL CHECK (status IN ('running', 'success', 'failed')),
+    path TEXT NOT NULL,
+    checksum TEXT,
+    size_bytes INTEGER,
+    encrypted INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    retention_until TEXT,
+    verified_at TEXT,
+    verification_status TEXT CHECK (verification_status IN ('verified', 'failed')),
+    error TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_backup_records_created_at ON backup_records(created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS vulnerability_scans (
+    id TEXT PRIMARY KEY,
+    scanner TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('passed', 'failed')),
+    critical_count INTEGER NOT NULL DEFAULT 0,
+    high_count INTEGER NOT NULL DEFAULT 0,
+    medium_count INTEGER NOT NULL DEFAULT 0,
+    low_count INTEGER NOT NULL DEFAULT 0,
+    scanned_at TEXT NOT NULL,
+    report TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_vulnerability_scans_scanned_at ON vulnerability_scans(scanned_at DESC);
 `;
 
 export const DATABASE_PATH = Symbol("ADMIN_X_DATABASE_PATH");
@@ -165,10 +201,21 @@ export class DatabaseService implements OnModuleDestroy {
       ["locked_until", "TEXT"],
       ["session_version", "INTEGER NOT NULL DEFAULT 0"],
       ["password_changed_at", "TEXT NOT NULL DEFAULT ''"],
+      ["privacy_notice_accepted_at", "TEXT NOT NULL DEFAULT ''"],
       ["last_login_ip", "TEXT NOT NULL DEFAULT ''"],
     ] as const) {
       try {
         this.connection.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`);
+      } catch {
+        // The column already exists on a current database.
+      }
+    }
+    for (const [name, definition] of [
+      ["verified_at", "TEXT"],
+      ["verification_status", "TEXT"],
+    ] as const) {
+      try {
+        this.connection.exec(`ALTER TABLE backup_records ADD COLUMN ${name} ${definition}`);
       } catch {
         // The column already exists on a current database.
       }
@@ -216,7 +263,9 @@ export class DatabaseService implements OnModuleDestroy {
        SET data_scope = 'all'
        WHERE role IN ('system-admin', 'security-admin', 'audit-admin', 'business-admin')
          AND data_scope = 'assigned';
-       UPDATE users SET password_changed_at = created_at WHERE password_changed_at = '';`,
+       UPDATE users SET password_changed_at = created_at WHERE password_changed_at = '';
+       UPDATE users SET privacy_notice_accepted_at = created_at WHERE privacy_notice_accepted_at = '';
+       UPDATE security_policy SET lockout_minutes = 30 WHERE lockout_minutes < 30;`,
     );
   }
 
@@ -257,6 +306,7 @@ export class DatabaseService implements OnModuleDestroy {
           locked_until TEXT,
           session_version INTEGER NOT NULL DEFAULT 0,
           password_changed_at TEXT NOT NULL DEFAULT '',
+          privacy_notice_accepted_at TEXT NOT NULL DEFAULT '',
           last_login_ip TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL,
           last_active_at TEXT
@@ -266,8 +316,9 @@ export class DatabaseService implements OnModuleDestroy {
         `INSERT INTO users_migrating
           (id, username, display_name, email, password_hash, role, status, avatar, remark,
            data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
-           session_version, password_changed_at, last_login_ip, created_at, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           session_version, password_changed_at, privacy_notice_accepted_at, last_login_ip,
+           created_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const legacy of rows) {
         insert.run(
@@ -287,6 +338,7 @@ export class DatabaseService implements OnModuleDestroy {
           0,
           null,
           0,
+          String(legacy.created_at),
           String(legacy.created_at),
           "",
           String(legacy.created_at),
@@ -437,6 +489,20 @@ export class DatabaseService implements OnModuleDestroy {
     return rows.map((audit) => toAuditRecord(audit));
   }
 
+  listAuditRecordsForActor(actorId: string, limit = 1000): AuditRecord[] {
+    const rows = this.connection
+      .prepare(
+        `SELECT id, actor_id, actor_name, actor_username, actor_role, action, resource, target_id,
+                title, description, type, result, before_json, after_json, ip_address, user_agent,
+                request_id, integrity_hash, created_at
+         FROM activity_logs
+         WHERE actor_id = ?
+         ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(actorId, Math.max(1, Math.min(limit, 5000))) as SqlRow[];
+    return rows.map(toAuditRecord);
+  }
+
   countAuditRecords(keyword: string, result: AuditRecord["result"] | "all"): number {
     const normalizedKeyword = keyword.trim().toLowerCase();
     const conditions: string[] = [];
@@ -456,6 +522,144 @@ export class DatabaseService implements OnModuleDestroy {
       .prepare(`SELECT COUNT(*) AS count FROM activity_logs ${whereClause}`)
       .get(...parameters) as SqlRow | undefined;
     return toNumber(row?.count);
+  }
+
+  createBackupRecord(input: {
+    path: string;
+    retentionUntil?: string;
+    target: BackupTarget;
+  }): BackupRecord {
+    const id = randomUUID();
+    const createdAt = new Date().toISOString();
+    this.connection
+      .prepare(
+        `INSERT INTO backup_records
+          (id, target, status, path, encrypted, created_at, retention_until)
+         VALUES (?, ?, 'running', ?, 1, ?, ?)`,
+      )
+      .run(id, input.target, input.path, createdAt, input.retentionUntil ?? null);
+    return {
+      createdAt,
+      encrypted: true,
+      id,
+      path: input.path,
+      retentionUntil: input.retentionUntil,
+      status: "running",
+      target: input.target,
+    };
+  }
+
+  completeBackupRecord(
+    id: string,
+    input: { checksum: string; completedAt?: string; sizeBytes: number },
+  ): BackupRecord {
+    const completedAt = input.completedAt ?? new Date().toISOString();
+    this.connection
+      .prepare(
+        `UPDATE backup_records
+         SET status = 'success', checksum = ?, size_bytes = ?, completed_at = ?, error = NULL
+         WHERE id = ?`,
+      )
+      .run(input.checksum, input.sizeBytes, completedAt, id);
+    return this.getBackupRecord(id);
+  }
+
+  failBackupRecord(id: string, error: string): BackupRecord {
+    this.connection
+      .prepare(
+        `UPDATE backup_records
+         SET status = 'failed', completed_at = ?, error = ?
+         WHERE id = ?`,
+      )
+      .run(new Date().toISOString(), error.slice(0, 500), id);
+    return this.getBackupRecord(id);
+  }
+
+  listBackupRecords(limit = 50): BackupRecord[] {
+    const rows = this.connection
+      .prepare(
+        `SELECT id, target, status, path, checksum, size_bytes, encrypted, created_at,
+                completed_at, retention_until, verified_at, verification_status, error
+         FROM backup_records ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(Math.max(1, Math.min(limit, 200))) as SqlRow[];
+    return rows.map(toBackupRecord);
+  }
+
+  getBackupRecord(id: string): BackupRecord {
+    const row = this.connection
+      .prepare(
+        `SELECT id, target, status, path, checksum, size_bytes, encrypted, created_at,
+                completed_at, retention_until, verified_at, verification_status, error
+         FROM backup_records WHERE id = ?`,
+      )
+      .get(id) as SqlRow | undefined;
+    if (!row) {
+      throw new Error("备份记录不存在");
+    }
+    return toBackupRecord(row);
+  }
+
+  markBackupVerification(id: string, valid: boolean): BackupRecord {
+    this.connection
+      .prepare(
+        `UPDATE backup_records
+         SET verified_at = ?, verification_status = ?
+         WHERE id = ?`,
+      )
+      .run(new Date().toISOString(), valid ? "verified" : "failed", id);
+    return this.getBackupRecord(id);
+  }
+
+  createVulnerabilityScan(input: {
+    criticalCount: number;
+    highCount: number;
+    lowCount: number;
+    mediumCount: number;
+    report?: string;
+    scanner: string;
+    status: "passed" | "failed";
+  }): VulnerabilityScanRecord {
+    const record: VulnerabilityScanRecord = {
+      criticalCount: input.criticalCount,
+      highCount: input.highCount,
+      id: randomUUID(),
+      lowCount: input.lowCount,
+      mediumCount: input.mediumCount,
+      report: input.report,
+      scannedAt: new Date().toISOString(),
+      scanner: input.scanner,
+      status: input.status,
+    };
+    this.connection
+      .prepare(
+        `INSERT INTO vulnerability_scans
+          (id, scanner, status, critical_count, high_count, medium_count, low_count, scanned_at, report)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        record.id,
+        record.scanner,
+        record.status,
+        record.criticalCount,
+        record.highCount,
+        record.mediumCount,
+        record.lowCount,
+        record.scannedAt,
+        record.report ?? null,
+      );
+    return record;
+  }
+
+  listVulnerabilityScans(limit = 20): VulnerabilityScanRecord[] {
+    const rows = this.connection
+      .prepare(
+        `SELECT id, scanner, status, critical_count, high_count, medium_count,
+                low_count, scanned_at, report
+         FROM vulnerability_scans ORDER BY scanned_at DESC LIMIT ?`,
+      )
+      .all(Math.max(1, Math.min(limit, 100))) as SqlRow[];
+    return rows.map(toVulnerabilityScanRecord);
   }
 
   getVisitCount(since: string, userId?: string): number {
@@ -493,7 +697,7 @@ export class DatabaseService implements OnModuleDestroy {
     return {
       allowedIpRanges: parseStringArray(row?.allowed_ip_ranges),
       concurrentSessionLimit: toNumber(row?.concurrent_session_limit) || 1,
-      lockoutMinutes: toNumber(row?.lockout_minutes) || 15,
+      lockoutMinutes: toNumber(row?.lockout_minutes) || 30,
       loginFailureLimit: toNumber(row?.login_failure_limit) || 5,
       mfaRequiredForAdministrators: Boolean(toNumber(row?.mfa_required_admin)),
       passwordMaxAgeDays: toNumber(row?.password_max_age_days) || 90,
@@ -558,15 +762,29 @@ export class DatabaseService implements OnModuleDestroy {
       .run(sessionId, userId, now, now, expiresAt);
   }
 
-  isSessionActive(userId: string, sessionId: string): boolean {
+  isSessionActive(userId: string, sessionId: string, idleTimeoutSeconds?: number): boolean {
     const now = new Date().toISOString();
+    const idleSince = idleTimeoutSeconds
+      ? new Date(Date.now() - idleTimeoutSeconds * 1000).toISOString()
+      : undefined;
     const row = this.connection
       .prepare(
         `SELECT id FROM auth_sessions
-         WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?`,
+         WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?
+           AND (? IS NULL OR last_seen_at > ?)`,
       )
-      .get(sessionId, userId, now) as { id?: string } | undefined;
+      .get(sessionId, userId, now, idleSince ?? null, idleSince ?? "") as
+      | { id?: string }
+      | undefined;
     if (!row?.id) {
+      if (idleSince) {
+        this.connection
+          .prepare(
+            `UPDATE auth_sessions SET revoked_at = ?
+             WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND last_seen_at <= ?`,
+          )
+          .run(now, sessionId, userId, idleSince);
+      }
       return false;
     }
     this.connection
@@ -650,6 +868,41 @@ function toAuditRecord(row: SqlRow): AuditRecord {
     title: String(row.title),
     type: row.type as AuditRecord["type"],
     userAgent: typeof row.user_agent === "string" ? row.user_agent : undefined,
+  };
+}
+
+function toBackupRecord(row: SqlRow): BackupRecord {
+  return {
+    checksum: typeof row.checksum === "string" ? row.checksum : undefined,
+    completedAt: typeof row.completed_at === "string" ? row.completed_at : undefined,
+    createdAt: String(row.created_at),
+    encrypted: Boolean(toNumber(row.encrypted)),
+    error: typeof row.error === "string" ? row.error : undefined,
+    id: String(row.id),
+    path: String(row.path),
+    retentionUntil: typeof row.retention_until === "string" ? row.retention_until : undefined,
+    sizeBytes: row.size_bytes === null ? undefined : toNumber(row.size_bytes),
+    status: row.status === "failed" || row.status === "success" ? row.status : "running",
+    target: row.target === "remote" ? "remote" : "local",
+    verificationStatus:
+      row.verification_status === "verified" || row.verification_status === "failed"
+        ? row.verification_status
+        : undefined,
+    verifiedAt: typeof row.verified_at === "string" ? row.verified_at : undefined,
+  };
+}
+
+function toVulnerabilityScanRecord(row: SqlRow): VulnerabilityScanRecord {
+  return {
+    criticalCount: toNumber(row.critical_count),
+    highCount: toNumber(row.high_count),
+    id: String(row.id),
+    lowCount: toNumber(row.low_count),
+    mediumCount: toNumber(row.medium_count),
+    report: typeof row.report === "string" ? row.report : undefined,
+    scannedAt: String(row.scanned_at),
+    scanner: String(row.scanner),
+    status: row.status === "passed" ? "passed" : "failed",
   };
 }
 

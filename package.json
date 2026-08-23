@@ -11,6 +11,7 @@
     "check": "vp check",
     "start": "node .output/server/main.mjs",
     "test": "vp run -r test",
+    "test:e2e": "vp -C apps/api run test:e2e",
     "ready": "vp check && vp run -r check && vp run -r test && vp run build:workspace && vp run build"
   },
   "devDependencies": {

@@ -17,6 +17,7 @@ import type {
   AuthUser,
   CreateUserRequest,
   PageResult,
+  PersonalDataExport,
   UserListQuery,
   UserRecord,
 } from "@admin-x/shared";
@@ -29,6 +30,7 @@ import { getAuditContext } from "../auth/request-context.js";
 import { SensitiveActionGuard } from "../auth/sensitive-action.guard.js";
 import {
   CreateUserDto,
+  PrivacyEraseDto,
   UpdatePasswordDto,
   UpdateProfileDto,
   UpdateUserDataScopeDto,
@@ -71,6 +73,22 @@ export class UsersController {
     );
   }
 
+  @Get("me/privacy/export")
+  exportPersonalData(@Request() request: AuthenticatedRequest): ApiResponse<PersonalDataExport> {
+    return createApiResponse(this.usersService.exportPersonalData(request.user.id));
+  }
+
+  @Post("me/privacy/erase")
+  @UseGuards(AuthGuard, SensitiveActionGuard)
+  erasePersonalData(
+    @Body() body: PrivacyEraseDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<null> {
+    return createApiResponse(
+      this.usersService.erasePersonalData(request.user.id, body, getAuditContext(request)),
+    );
+  }
+
   @Patch("me/password")
   updatePassword(
     @Body() body: UpdatePasswordDto,
@@ -92,6 +110,16 @@ export class UsersController {
     return createApiResponse(
       this.usersService.updateStatus(id, body.status, request.user, getAuditContext(request)),
     );
+  }
+
+  @Patch(":id/unlock")
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
+  @RequirePermissions("user:status")
+  unlock(
+    @Param("id") id: string,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<UserRecord> {
+    return createApiResponse(this.usersService.unlock(id, request.user, getAuditContext(request)));
   }
 
   @Patch(":id/role")

@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsNotEmpty,
@@ -53,6 +54,10 @@ export class CreateUserDto implements CreateUserRequest {
   @IsString({ message: "备注必须是字符串" })
   @MaxLength(200, { message: "备注不能超过 200 个字符" })
   remark?: string;
+
+  @IsBoolean({ message: "个人信息保护告知确认值不正确" })
+  @IsOptional()
+  privacyNoticeAccepted?: boolean;
 }
 
 export class UpdateUserStatusDto {
@@ -105,4 +110,10 @@ export class UpdatePasswordDto implements UpdatePasswordRequest {
   @IsString({ message: "新密码必须是字符串" })
   @MinLength(8, { message: "新密码长度不能少于 8 位" })
   newPassword!: string;
+}
+
+export class PrivacyEraseDto {
+  @IsNotEmpty({ message: "当前密码不能为空" })
+  @IsString({ message: "当前密码必须是字符串" })
+  currentPassword!: string;
 }

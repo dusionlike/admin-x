@@ -1,4 +1,12 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from "class-validator";
+import {
+  IsBoolean,
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+} from "class-validator";
 
 import type { LoginRequest, ReauthenticationRequest, SetupAdminRequest } from "@admin-x/shared";
 
@@ -35,6 +43,10 @@ export class SetupAdminDto implements SetupAdminRequest {
   @IsString({ message: "用户名必须是字符串" })
   @MinLength(3, { message: "用户名至少 3 个字符" })
   username!: string;
+
+  @IsBoolean({ message: "个人信息保护告知确认值不正确" })
+  @IsOptional()
+  privacyNoticeAccepted?: boolean;
 }
 
 export class MfaSetupDto {

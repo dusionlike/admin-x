@@ -15,6 +15,8 @@ import type {
   DataScope,
   DataScopeType,
   PageResult,
+  PersonalDataExport,
+  PrivacyEraseRequest,
   SetupAdminRequest,
   UpdatePasswordRequest,
   UpdateProfileRequest,
@@ -55,6 +57,7 @@ interface UserRow {
   locked_until: string | null;
   session_version: number;
   password_changed_at: string;
+  privacy_notice_accepted_at: string;
   last_login_ip: string;
   created_at: string;
   last_active_at: string | null;
@@ -80,7 +83,8 @@ export interface LoginCredentials {
 const USER_COLUMNS = `
   id, username, display_name, email, password_hash, role, status, avatar, remark,
   data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
-  session_version, password_changed_at, last_login_ip, created_at, last_active_at`;
+  session_version, password_changed_at, privacy_notice_accepted_at, last_login_ip,
+  created_at, last_active_at`;
 
 @Injectable()
 export class UsersService {
@@ -142,6 +146,7 @@ export class UsersService {
       displayName: input.displayName,
       email: input.email,
       password: input.password,
+      privacyNoticeAccepted: input.privacyNoticeAccepted,
       remark: input.remark,
       role: input.role,
       status: bootstrapSecurityAdmin ? "active" : (input.status ?? "invited"),
@@ -172,6 +177,7 @@ export class UsersService {
         displayName: input.displayName,
         email: input.email,
         password: input.password,
+        privacyNoticeAccepted: input.privacyNoticeAccepted,
         role: "system-admin",
         status: "active",
         username: input.username,
@@ -257,6 +263,34 @@ export class UsersService {
       targetId: id,
     });
     return updatedUser;
+  }
+
+  unlock(id: string, actor: AuthUser, context?: AuditContext): UserRecord {
+    const current = this.findRowById(id);
+    if (!current) {
+      throw new NotFoundException("用户不存在");
+    }
+    this.database.connection
+      .prepare(
+        `UPDATE users
+         SET failed_login_count = 0, locked_until = NULL, session_version = session_version + 1
+         WHERE id = ?`,
+      )
+      .run(id);
+    const updated = toPublicRecord(this.findRowById(id)!);
+    this.database.addActivity({
+      action: "user.unlock",
+      actor: toAuditActor(actor),
+      after: auditUser(updated),
+      before: auditUser(toPublicRecord(current)),
+      context,
+      description: `${actor.displayName}（@${actor.username}）解除了 ${current.display_name} 的登录锁定`,
+      title: "解锁用户账号",
+      type: "update",
+      resource: "user",
+      targetId: id,
+    });
+    return updated;
   }
 
   updateRole(id: string, role: UserRole, actor: AuthUser, context?: AuditContext): UserRecord {
@@ -450,6 +484,54 @@ export class UsersService {
       resource: "password",
       targetId: id,
     });
+  }
+
+  exportPersonalData(id: string): PersonalDataExport {
+    const row = this.findRowById(id);
+    if (!row) {
+      throw new NotFoundException("用户不存在");
+    }
+    return {
+      auditRecords: this.database.listAuditRecordsForActor(id),
+      exportedAt: new Date().toISOString(),
+      user: toAuthUser(row),
+    };
+  }
+
+  erasePersonalData(id: string, input: PrivacyEraseRequest, context?: AuditContext): null {
+    const user = this.findRowById(id);
+    if (!user) {
+      throw new NotFoundException("用户不存在");
+    }
+    if (!verifyPassword(input.currentPassword, user.password_hash)) {
+      throw new UnauthorizedException("当前密码不正确");
+    }
+    if (isAdministratorRole(user.role) && user.status === "active") {
+      const activeAdminCount = this.database.connection
+        .prepare(
+          "SELECT COUNT(*) AS count FROM users WHERE status = 'active' AND role NOT IN ('operator', 'readonly')",
+        )
+        .get() as { count?: number | bigint } | undefined;
+      if (Number(activeAdminCount?.count ?? 0) <= 1) {
+        throw new ConflictException("最后一个管理员账号不能注销，请先完成岗位交接");
+      }
+    }
+
+    const snapshot = toAuthUser(user);
+    this.database.revokeUserSessions(id);
+    this.database.connection.prepare("DELETE FROM users WHERE id = ?").run(id);
+    this.database.addActivity({
+      action: "privacy.erase",
+      actor: toAuditActor(snapshot),
+      before: auditUser(snapshot),
+      context,
+      description: `账号 @${snapshot.username} 已按个人信息主体请求注销，业务个人资料已清除`,
+      title: "注销个人账号",
+      type: "update",
+      resource: "privacy",
+      targetId: id,
+    });
+    return null;
   }
 
   remove(id: string, actor?: AuthUser, context?: AuditContext): null {
@@ -702,6 +784,7 @@ export class UsersService {
     displayName: string;
     email: string;
     password: string;
+    privacyNoticeAccepted?: boolean;
     remark?: string;
     role: UserRole;
     status: UserStatus;
@@ -719,6 +802,9 @@ export class UsersService {
     }
     if (existing?.email) {
       throw new ConflictException("邮箱已存在");
+    }
+    if (input.privacyNoticeAccepted === false) {
+      throw new BadRequestException("必须先阅读并同意个人信息保护告知");
     }
 
     const policy = this.database.getSecurityPolicy();
@@ -738,8 +824,9 @@ export class UsersService {
         `INSERT INTO users
           (id, username, display_name, email, password_hash, role, status, avatar, remark,
            data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
-           session_version, password_changed_at, last_login_ip, created_at, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           session_version, password_changed_at, privacy_notice_accepted_at, last_login_ip,
+           created_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -758,6 +845,7 @@ export class UsersService {
         0,
         null,
         0,
+        now,
         now,
         "",
         now,
@@ -863,6 +951,16 @@ function normalizeAvatar(value: unknown): string {
   }
   if (!/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) {
     throw new BadRequestException("头像格式不正确");
+  }
+  const encoded = value.slice(value.indexOf(",") + 1);
+  const bytes = Buffer.from(encoded, "base64");
+  const hasPngSignature = bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"));
+  const hasJpegSignature = bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
+  const hasWebpSignature =
+    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+    bytes.subarray(8, 12).toString("ascii") === "WEBP";
+  if (!hasPngSignature && !hasJpegSignature && !hasWebpSignature) {
+    throw new BadRequestException("头像内容未通过文件签名校验");
   }
   return value;
 }

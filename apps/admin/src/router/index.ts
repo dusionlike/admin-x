@@ -53,6 +53,12 @@ const router = createRouter({
           meta: { title: "安全审计", requiresAuth: true, permission: "audit:read" },
         },
         {
+          path: "compliance",
+          name: "compliance",
+          component: () => import("@/views/ComplianceView.vue"),
+          meta: { title: "等保合规", requiresAuth: true, permission: "compliance:read" },
+        },
+        {
           path: "profile",
           name: "profile",
           component: () => import("@/views/ProfileView.vue"),

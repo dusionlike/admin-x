@@ -153,7 +153,11 @@ export class AuthService {
       }
       if (
         typeof payload.jti !== "string" ||
-        !this.database.isSessionActive(String(payload.sub), payload.jti)
+        !this.database.isSessionActive(
+          String(payload.sub),
+          payload.jti,
+          policy.sessionTimeoutMinutes * 60,
+        )
       ) {
         throw new Error("Session is not active");
       }

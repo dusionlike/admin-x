@@ -14,7 +14,7 @@ export class UpdateSecurityPolicyDto implements SecurityPolicy {
   concurrentSessionLimit!: number;
 
   @IsInt({ message: "锁定时长必须是整数" })
-  @Min(1, { message: "锁定时长至少为 1 分钟" })
+  @Min(30, { message: "锁定时长至少为 30 分钟" })
   @Max(1440, { message: "锁定时长不能超过 1440 分钟" })
   lockoutMinutes!: number;
 

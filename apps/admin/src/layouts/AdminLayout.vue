@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import {
   ArrowDown,
   Bell,
+  CircleCheck,
   DataAnalysis,
   Document,
   Expand,
@@ -28,6 +29,7 @@ const canViewAnalytics = computed(() => authStore.can("analytics:view"));
 const canViewUsers = computed(() => authStore.can("user:read"));
 const canManageSecurity = computed(() => authStore.can("security:manage"));
 const canViewAudit = computed(() => authStore.can("audit:read"));
+const canViewCompliance = computed(() => authStore.can("compliance:read"));
 const roleLabel = computed(() => {
   return authStore.user ? getRoleDefinition(authStore.user.role).label : "普通用户";
 });
@@ -44,6 +46,9 @@ const activeMenu = computed(() => {
   }
   if (route.path.startsWith("/audit")) {
     return "/audit";
+  }
+  if (route.path.startsWith("/compliance")) {
+    return "/compliance";
   }
   if (route.path.startsWith("/profile")) {
     return "";
@@ -136,6 +141,10 @@ function showNotifications() {
         <el-menu-item v-if="canViewAudit" index="/audit">
           <el-icon><Document /></el-icon>
           <span class="menu-label">安全审计</span>
+        </el-menu-item>
+        <el-menu-item v-if="canViewCompliance" index="/compliance">
+          <el-icon><CircleCheck /></el-icon>
+          <span class="menu-label">等保合规</span>
         </el-menu-item>
       </el-menu>
 

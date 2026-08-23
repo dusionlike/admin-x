@@ -198,6 +198,49 @@ async function disableMfa() {
   }
 }
 
+async function exportPersonalData() {
+  try {
+    const data = await usersApi.exportPersonalData();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `admin-x-personal-data-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    ElMessage.success("个人数据导出文件已生成");
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "个人数据导出失败"));
+  }
+}
+
+async function erasePersonalData() {
+  try {
+    await ElMessageBox.confirm(
+      "注销会清除你的账号资料、访问记录和会话，必要的安全审计证据会依法保留。此操作不可撤销。",
+      "确认注销个人账号",
+      { type: "warning", confirmButtonText: "继续注销", cancelButtonText: "取消" },
+    );
+    const passwordPrompt = await ElMessageBox.prompt("请输入当前登录密码确认账号注销", "二次验证", {
+      inputType: "password",
+      inputPlaceholder: "当前密码",
+      confirmButtonText: "验证并注销",
+      cancelButtonText: "取消",
+      inputValidator: (value) => (value.trim() ? true : "当前密码不能为空"),
+    });
+    await authStore.reauthenticate(passwordPrompt.value);
+    await usersApi.erasePersonalData(passwordPrompt.value);
+    await authStore.logout().catch(() => undefined);
+    await router.push({ name: "login" });
+  } catch (error: unknown) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(getErrorMessage(error, "账号注销失败"));
+    }
+  }
+}
+
 function chooseAvatar() {
   avatarInput.value?.click();
 }
@@ -366,6 +409,8 @@ onMounted(() => {
           绑定 MFA <el-icon><ArrowRight /></el-icon>
         </el-button>
         <el-button v-else text type="danger" @click="disableMfa">停用 MFA</el-button>
+        <el-button text type="primary" @click="exportPersonalData">导出个人数据</el-button>
+        <el-button text type="danger" @click="erasePersonalData">注销账号</el-button>
       </div>
     </el-card>
 

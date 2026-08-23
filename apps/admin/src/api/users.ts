@@ -9,6 +9,7 @@ import type {
   UpdatePasswordRequest,
   UpdateUserDataScopeRequest,
   UpdateUserRoleRequest,
+  PersonalDataExport,
 } from "@admin-x/shared";
 
 import { requestData } from "./http";
@@ -67,6 +68,25 @@ export const usersApi = {
       data: payload,
       method: "PATCH",
       url: `/users/${id}/status`,
+    });
+  },
+  unlock(id: string) {
+    return requestData<UserRecord>({
+      method: "PATCH",
+      url: `/users/${id}/unlock`,
+    });
+  },
+  exportPersonalData() {
+    return requestData<PersonalDataExport>({
+      method: "GET",
+      url: "/users/me/privacy/export",
+    });
+  },
+  erasePersonalData(currentPassword: string) {
+    return requestData<null>({
+      data: { currentPassword },
+      method: "POST",
+      url: "/users/me/privacy/erase",
     });
   },
 };

@@ -96,6 +96,9 @@ vp run -r check
 # 运行共享包和 API 测试
 vp run -r test
 
+# 按规划文档附录运行 18 项安全清单 E2E
+vp run test:e2e
+
 # 构建前后端一体化部署包
 vp run build
 
@@ -113,30 +116,37 @@ vp run ready
 
 除初始化状态、初始化管理员和登录接口外，仪表盘和用户接口都要求 `Authorization: Bearer <token>`：
 
-| 方法     | 路径                        | 用途                               |
-| -------- | --------------------------- | ---------------------------------- |
-| `GET`    | `/api/auth/setup-status`    | 查询是否需要首次初始化             |
-| `POST`   | `/api/auth/setup`           | 创建唯一的初始系统管理员并登录     |
-| `POST`   | `/api/auth/login`           | 登录并获取 JWT                     |
-| `GET`    | `/api/auth/me`              | 获取当前用户                       |
-| `POST`   | `/api/auth/logout`          | 撤销当前账号的服务端会话           |
-| `POST`   | `/api/auth/reauth`          | 敏感操作前校验当前密码并换取短令牌 |
-| `GET`    | `/api/auth/mfa/status`      | 查询 MFA 绑定状态                  |
-| `POST`   | `/api/auth/mfa/setup`       | 生成 MFA 绑定密钥（需当前密码）    |
-| `POST`   | `/api/auth/mfa/enable`      | 校验动态码并启用 MFA               |
-| `POST`   | `/api/auth/mfa/disable`     | 二次验证后停用 MFA                 |
-| `GET`    | `/api/dashboard/overview`   | 获取工作台统计                     |
-| `GET`    | `/api/dashboard/analytics`  | 按角色权限获取分析数据             |
-| `GET`    | `/api/users`                | 分页搜索用户                       |
-| `POST`   | `/api/users`                | 创建用户                           |
-| `PATCH`  | `/api/users/:id/status`     | 更新用户状态                       |
-| `PATCH`  | `/api/users/:id/role`       | 由安全管理员分配用户角色           |
-| `PATCH`  | `/api/users/:id/data-scope` | 由安全管理员配置数据范围           |
-| `DELETE` | `/api/users/:id`            | 删除用户                           |
-| `GET`    | `/api/audit`                | 由审计管理员只读查询审计记录       |
-| `GET`    | `/api/audit/export`         | 由审计管理员导出审计记录           |
-| `GET`    | `/api/security/policy`      | 读取安全策略                       |
-| `PATCH`  | `/api/security/policy`      | 由安全管理员更新安全策略           |
+| 方法     | 路径                           | 用途                               |
+| -------- | ------------------------------ | ---------------------------------- |
+| `GET`    | `/api/auth/setup-status`       | 查询是否需要首次初始化             |
+| `POST`   | `/api/auth/setup`              | 创建唯一的初始系统管理员并登录     |
+| `POST`   | `/api/auth/login`              | 登录并获取 JWT                     |
+| `GET`    | `/api/auth/me`                 | 获取当前用户                       |
+| `POST`   | `/api/auth/logout`             | 撤销当前账号的服务端会话           |
+| `POST`   | `/api/auth/reauth`             | 敏感操作前校验当前密码并换取短令牌 |
+| `GET`    | `/api/auth/mfa/status`         | 查询 MFA 绑定状态                  |
+| `POST`   | `/api/auth/mfa/setup`          | 生成 MFA 绑定密钥（需当前密码）    |
+| `POST`   | `/api/auth/mfa/enable`         | 校验动态码并启用 MFA               |
+| `POST`   | `/api/auth/mfa/disable`        | 二次验证后停用 MFA                 |
+| `GET`    | `/api/dashboard/overview`      | 获取工作台统计                     |
+| `GET`    | `/api/dashboard/analytics`     | 按角色权限获取分析数据             |
+| `GET`    | `/api/users`                   | 分页搜索用户                       |
+| `POST`   | `/api/users`                   | 创建用户                           |
+| `PATCH`  | `/api/users/:id/status`        | 更新用户状态                       |
+| `PATCH`  | `/api/users/:id/role`          | 由安全管理员分配用户角色           |
+| `PATCH`  | `/api/users/:id/data-scope`    | 由安全管理员配置数据范围           |
+| `DELETE` | `/api/users/:id`               | 删除用户                           |
+| `GET`    | `/api/audit`                   | 由审计管理员只读查询审计记录       |
+| `GET`    | `/api/audit/export`            | 由审计管理员导出审计记录           |
+| `GET`    | `/api/security/policy`         | 读取安全策略                       |
+| `PATCH`  | `/api/security/policy`         | 由安全管理员更新安全策略           |
+| `GET`    | `/api/compliance/overview`     | 查看 18 项等保设计检查清单和证据   |
+| `GET`    | `/api/compliance/backups`      | 查看本地/异地备份记录              |
+| `POST`   | `/api/compliance/backups`      | 系统管理员生成加密备份             |
+| `GET`    | `/api/health`                  | 健康探针（无需登录）               |
+| `GET`    | `/api/ready`                   | 就绪探针（无需登录）               |
+| `GET`    | `/api/users/me/privacy/export` | 导出当前账号个人数据               |
+| `POST`   | `/api/users/me/privacy/erase`  | 注销当前账号并清除业务个人资料     |
 
 ## 角色与权限模型
 
@@ -193,9 +203,12 @@ vp run ready
 - 服务端鉴权：菜单隐藏只是交互优化，所有 API 由 `AuthGuard` 和 `PermissionGuard` 再次校验角色权限。
 - 数据权限：账号保存 `全部/本单位/本部门/本项目/指定/本人` 数据范围，业务模块应复用该范围过滤器。
 - 登录安全：失败次数锁定、密码复杂度、密码有效期、来源 IP 限制、会话超时、并发会话上限和服务端会话撤销。
+- 登录失败达到 5 次后默认锁定 30 分钟；空闲会话会按策略失效，系统管理员可在用户管理中执行带二次验证的解锁。
 - 多因素认证：账号可绑定 TOTP MFA；MFA 密钥使用服务端密钥加密存储，管理员强制 MFA 策略启用前会检查所有有效管理员。
 - 敏感操作复核：账号创建、启停、删除、角色/数据范围调整和安全策略变更默认要求当前密码二次验证，短令牌绑定会话版本并在 5 分钟后失效。
 - 审计保护：审计记录包含账号、角色、时间、IP、请求号、结果、对象、前后值和完整性哈希；SQLite 触发器禁止更新/删除审计记录。
+- 合规中心：对应规划文档附录的 18 项检查，提供 TLS/CSP、输入和上传防护、漏洞扫描证据、AES-256-GCM 本地/异地备份、健康就绪探针和个人信息权利闭环。
+- 个人信息：初始化和新成员创建均可记录告知确认；资料页支持导出个人数据和注销账号，密码、MFA 密钥及备份均不以明文存储。
 
 ### 实现位置
 
@@ -208,6 +221,8 @@ vp run ready
 - 安全审计页面：`apps/admin/src/views/AuditView.vue`
 
 这套代码提供的是后台应用层的 RBAC 基础，不能单独等同于“通过三级等保”。正式测评仍需结合部署环境落实多因素鉴别、传输与存储保护、日志留存与集中管控、备份恢复、制度和人员配备等要求。
+
+合规中心的“已满足”状态只代表应用层有可验证实现和运行证据；生产环境仍应配置 `SECURE_TRANSPORT_REQUIRED=true`、独立的 `BACKUP_ENCRYPTION_KEY`、异地 `BACKUP_REMOTE_PATH` 和 `HA_ENABLED=true`，并将漏洞扫描结果接入发布流水线。
 
 前端开发服务器会将 `/api` 代理到 `http://localhost:3000`。一体化部署默认使用相对路径 `/api`，也可以在构建前通过 `VITE_API_BASE_URL` 指向独立 API 地址；服务端运行时通过 `PORT` 和 `FRONTEND_ORIGIN` 调整 NestJS 配置。
 

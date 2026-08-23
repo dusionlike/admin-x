@@ -48,6 +48,7 @@ const form = reactive<CreateUserRequest>({
   displayName: "",
   email: "",
   password: "",
+  privacyNoticeAccepted: false,
   role: "operator",
   status: "invited",
   username: "",
@@ -144,6 +145,13 @@ const formRules: FormRules<CreateUserRequest> = {
       },
     },
   ],
+  privacyNoticeAccepted: [
+    {
+      trigger: "change",
+      validator: (_rule, value, callback) =>
+        value === true ? callback() : callback(new Error("请先确认个人信息保护告知")),
+    },
+  ],
   username: [
     { message: "请输入用户名", required: true, trigger: "blur" },
     { min: 3, message: "用户名至少 3 个字符", trigger: "blur" },
@@ -185,6 +193,7 @@ function resetForm() {
   form.displayName = "";
   form.email = "";
   form.password = "";
+  form.privacyNoticeAccepted = false;
   form.role = "operator";
   form.status = "invited";
   form.username = "";
@@ -343,6 +352,21 @@ async function toggleStatus(row: UserRecord) {
   }
 }
 
+async function unlockUser(row: UserRecord) {
+  try {
+    if (!(await confirmSensitiveAction())) {
+      return;
+    }
+    await usersApi.unlock(row.id);
+    ElMessage.success("账号登录锁定已解除");
+    await loadUsers();
+  } catch (error: unknown) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(getErrorMessage(error, "解除账号锁定失败"));
+    }
+  }
+}
+
 async function removeUser(row: UserRecord) {
   try {
     await ElMessageBox.confirm(
@@ -454,6 +478,9 @@ void loadUsers();
               <el-button v-if="canManageStatus" text type="primary" @click="toggleStatus(row)">
                 {{ row.status === "active" ? "停用" : "启用" }}
               </el-button>
+              <el-button v-if="canManageStatus" text type="warning" @click="unlockUser(row)">
+                解锁
+              </el-button>
               <el-button v-if="canAssignRoles" text type="primary" @click="openRoleDialog(row)">
                 分配角色
               </el-button>
@@ -525,6 +552,11 @@ void loadUsers();
               : "普通成员密码至少 8 位，并包含数字、大小写字母、特殊字符中的至少三类。"
           }}
         </p>
+        <el-form-item prop="privacyNoticeAccepted">
+          <el-checkbox v-model="form.privacyNoticeAccepted">
+            已告知该成员采集目的，并同意仅保存业务必需的个人信息。
+          </el-checkbox>
+        </el-form-item>
         <div class="form-grid">
           <el-form-item label="初始角色">
             <el-select

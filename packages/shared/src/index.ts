@@ -59,7 +59,10 @@ export type Permission =
   | "business:read"
   | "business:operate"
   | "business:manage"
-  | "system:manage";
+  | "system:manage"
+  | "compliance:read"
+  | "compliance:manage"
+  | "backup:manage";
 
 export interface RoleDefinition {
   code: UserRole;
@@ -83,6 +86,8 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
       "user:status",
       "user:delete",
       "system:manage",
+      "compliance:read",
+      "backup:manage",
     ],
     responsibilities: "账号、组织、系统参数、运行维护、备份恢复",
     defaultDataScope: "all",
@@ -91,7 +96,14 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     code: "security-admin",
     description: "负责安全策略、授权审批和访问控制，不负责系统运行和审计记录管理。",
     label: "安全管理员",
-    permissions: ["dashboard:view", "user:read", "role:assign", "security:manage"],
+    permissions: [
+      "dashboard:view",
+      "user:read",
+      "role:assign",
+      "security:manage",
+      "compliance:read",
+      "compliance:manage",
+    ],
     responsibilities: "授权审批、口令策略、访问控制、安全参数",
     defaultDataScope: "all",
   },
@@ -99,7 +111,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     code: "audit-admin",
     description: "负责审计记录的查询、分析和导出，不得修改业务数据或安全策略。",
     label: "审计管理员",
-    permissions: ["dashboard:view", "audit:read", "audit:export"],
+    permissions: ["dashboard:view", "audit:read", "audit:export", "compliance:read"],
     responsibilities: "审计查询、审计分析、审计报告、留痕检查",
     defaultDataScope: "all",
   },
@@ -294,6 +306,7 @@ export interface SetupAdminRequest {
   displayName: string;
   email: string;
   password: string;
+  privacyNoticeAccepted?: boolean;
 }
 
 export interface MetricItem {
@@ -387,6 +400,11 @@ export interface CreateUserRequest {
   role: UserRole;
   status?: UserStatus;
   remark?: string;
+  privacyNoticeAccepted?: boolean;
+}
+
+export interface PrivacyEraseRequest {
+  currentPassword: string;
 }
 
 export interface UpdateUserStatusRequest {
@@ -440,6 +458,93 @@ export interface SecurityPolicy {
   mfaRequiredForAdministrators: boolean;
   sensitiveActionReauth: boolean;
   allowedIpRanges: string[];
+}
+
+export type ComplianceStatus = "pass" | "attention" | "fail";
+export type BackupTarget = "local" | "remote";
+export type BackupStatus = "running" | "success" | "failed";
+
+export interface BackupRecord {
+  id: string;
+  target: BackupTarget;
+  status: BackupStatus;
+  path: string;
+  checksum?: string;
+  sizeBytes?: number;
+  encrypted: boolean;
+  createdAt: string;
+  completedAt?: string;
+  retentionUntil?: string;
+  verifiedAt?: string;
+  verificationStatus?: "verified" | "failed";
+  error?: string;
+}
+
+export interface BackupVerification {
+  backupId: string;
+  checksum: string;
+  tables: string[];
+  valid: boolean;
+  verifiedAt: string;
+}
+
+export interface VulnerabilityScanRecord {
+  id: string;
+  scanner: string;
+  status: "passed" | "failed";
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  scannedAt: string;
+  report?: string;
+}
+
+export interface ComplianceCheck {
+  id: number;
+  key: string;
+  title: string;
+  controlArea: string;
+  requirement: string;
+  status: ComplianceStatus;
+  evidence: string;
+  owner: string;
+  automated: boolean;
+  lastCheckedAt: string;
+}
+
+export interface ComplianceOverview {
+  overallStatus: ComplianceStatus;
+  score: number;
+  passed: number;
+  total: number;
+  checks: ComplianceCheck[];
+  capabilities: {
+    secureTransportRequired: boolean;
+    contentSecurityPolicy: boolean;
+    inputValidation: boolean;
+    malwareScanMode: string;
+    passwordHashing: string;
+    sensitiveDataEncryption: string;
+    auditAppendOnly: boolean;
+    auditRetentionMonths: number;
+    backupEncryption: string;
+    highAvailability: boolean;
+  };
+  latestBackups: BackupRecord[];
+  latestVulnerabilityScan?: VulnerabilityScanRecord;
+  privacy: {
+    collectedFields: string[];
+    purposes: string[];
+    retentionDays: number;
+    rights: string[];
+  };
+}
+
+export interface PersonalDataExport {
+  exportedAt: string;
+  user: Omit<AuthUser, "mfaEnabled"> & { mfaEnabled: boolean };
+  auditRecords: AuditRecord[];
 }
 
 export interface MfaStatus {

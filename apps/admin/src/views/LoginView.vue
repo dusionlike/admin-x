@@ -31,6 +31,7 @@ const setupForm = reactive<SetupForm>({
   displayName: "",
   email: "",
   password: "",
+  privacyNoticeAccepted: false,
   username: "",
 });
 
@@ -73,6 +74,14 @@ const setupRules: FormRules<SetupForm> = {
         });
         callback(error ? new Error(error) : undefined);
       },
+    },
+  ],
+  privacyNoticeAccepted: [
+    {
+      message: "请先阅读并同意个人信息保护告知",
+      trigger: "change",
+      validator: (_rule, value, callback) =>
+        value === true ? callback() : callback(new Error("请先阅读并同意个人信息保护告知")),
     },
   ],
   username: [
@@ -132,6 +141,7 @@ async function handleSetup() {
       displayName: setupForm.displayName,
       email: setupForm.email,
       password: setupForm.password,
+      privacyNoticeAccepted: setupForm.privacyNoticeAccepted,
       username: setupForm.username,
     });
     authStore.setSession(result);
@@ -246,14 +256,6 @@ onMounted(() => {
               ></template>
             </el-input>
           </el-form-item>
-          <el-form-item label="MFA 验证码（已绑定时填写）" prop="mfaCode">
-            <el-input
-              v-model="form.mfaCode"
-              size="large"
-              maxlength="6"
-              placeholder="绑定 MFA 的账号请输入 6 位动态验证码"
-            />
-          </el-form-item>
           <p class="password-policy-hint">
             管理员密码至少 12 位，并包含数字、大小写字母、特殊字符中的至少三类。
           </p>
@@ -269,6 +271,11 @@ onMounted(() => {
                 ><el-icon> <Lock /> </el-icon
               ></template>
             </el-input>
+          </el-form-item>
+          <el-form-item prop="privacyNoticeAccepted">
+            <el-checkbox v-model="setupForm.privacyNoticeAccepted">
+              我已阅读并同意个人信息保护告知，仅采集账号管理所必需的信息。
+            </el-checkbox>
           </el-form-item>
           <el-button
             class="login-submit"
@@ -294,7 +301,12 @@ onMounted(() => {
           @submit.prevent="handleLogin"
         >
           <el-form-item label="用户名" prop="username">
-            <el-input v-model="form.username" size="large" placeholder="请输入账号">
+            <el-input
+              v-model="form.username"
+              size="large"
+              autocomplete="username"
+              placeholder="请输入账号"
+            >
               <template #prefix
                 ><el-icon> <User /> </el-icon
               ></template>
@@ -306,12 +318,22 @@ onMounted(() => {
               size="large"
               type="password"
               show-password
+              autocomplete="current-password"
               placeholder="请输入密码"
             >
               <template #prefix
                 ><el-icon> <Lock /> </el-icon
               ></template>
             </el-input>
+          </el-form-item>
+          <el-form-item label="MFA 动态验证码（已绑定时填写）" prop="mfaCode">
+            <el-input
+              v-model="form.mfaCode"
+              size="large"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="请输入认证器当前的 6 位验证码"
+            />
           </el-form-item>
           <el-button
             class="login-submit"

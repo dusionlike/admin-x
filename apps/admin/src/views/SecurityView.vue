@@ -21,6 +21,9 @@ const permissionLabels: Record<Permission, string> = {
   "business:manage": "管理业务",
   "business:operate": "执行业务操作",
   "business:read": "查询业务数据",
+  "backup:manage": "管理备份",
+  "compliance:manage": "维护合规证据",
+  "compliance:read": "查看合规状态",
   "dashboard:view": "查看工作台",
   "role:assign": "分配角色",
   "security:manage": "管理安全策略",
@@ -46,7 +49,7 @@ const ipRangeText = ref("");
 const policy = reactive<SecurityPolicy>({
   allowedIpRanges: [],
   concurrentSessionLimit: 1,
-  lockoutMinutes: 15,
+  lockoutMinutes: 30,
   loginFailureLimit: 5,
   mfaRequiredForAdministrators: false,
   passwordMaxAgeDays: 90,
@@ -191,7 +194,7 @@ onMounted(() => {
             <el-input-number v-model="policy.loginFailureLimit" :min="3" :max="20" />
           </el-form-item>
           <el-form-item label="锁定时长（分钟）">
-            <el-input-number v-model="policy.lockoutMinutes" :min="1" :max="1440" />
+            <el-input-number v-model="policy.lockoutMinutes" :min="30" :max="1440" />
           </el-form-item>
           <el-form-item label="会话超时（分钟）">
             <el-input-number v-model="policy.sessionTimeoutMinutes" :min="5" :max="480" />

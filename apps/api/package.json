@@ -8,7 +8,8 @@
     "build": "vp build",
     "start": "node dist/main.mjs",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "vp test"
+    "test": "vp test",
+    "test:e2e": "tsx ../../tests/e2e/security-checklist.e2e.ts"
   },
   "dependencies": {
     "@admin-x/shared": "workspace:*",

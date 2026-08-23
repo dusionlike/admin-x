@@ -6,6 +6,7 @@ import {
   getErrorMessage,
   ROLE_DEFINITIONS,
   type DataScopeType,
+  type EmailMfaPolicyStatus,
   type Permission,
   type SecurityPolicy,
 } from "@admin-x/shared";
@@ -45,7 +46,13 @@ const dataScopeLabels: Record<DataScopeType, string> = {
 
 const policyLoading = ref(false);
 const policySaving = ref(false);
+const emailMfaPolicyLoading = ref(false);
+const emailMfaPolicySaving = ref(false);
 const ipRangeText = ref("");
+const emailMfaPolicy = reactive<EmailMfaPolicyStatus>({
+  configured: false,
+  enabled: false,
+});
 const policy = reactive<SecurityPolicy>({
   allowedIpRanges: [],
   concurrentSessionLimit: 1,
@@ -138,8 +145,38 @@ async function savePolicy() {
   }
 }
 
+async function loadEmailMfaPolicy() {
+  emailMfaPolicyLoading.value = true;
+  try {
+    Object.assign(emailMfaPolicy, await securityApi.getEmailMfaPolicy());
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "邮箱 MFA 策略加载失败"));
+  } finally {
+    emailMfaPolicyLoading.value = false;
+  }
+}
+
+async function saveEmailMfaPolicy() {
+  emailMfaPolicySaving.value = true;
+  try {
+    if (!(await confirmSensitiveAction())) {
+      return;
+    }
+    Object.assign(
+      emailMfaPolicy,
+      await securityApi.updateEmailMfaPolicy({ enabled: emailMfaPolicy.enabled }),
+    );
+    ElMessage.success("邮箱 MFA 登录策略已保存");
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "邮箱 MFA 策略保存失败"));
+  } finally {
+    emailMfaPolicySaving.value = false;
+  }
+}
+
 onMounted(() => {
   void loadPolicy();
+  void loadEmailMfaPolicy();
 });
 </script>
 
@@ -187,8 +224,8 @@ onMounted(() => {
           <el-form-item label="密码最小长度">
             <el-input-number v-model="policy.passwordMinLength" :min="8" :max="64" />
           </el-form-item>
-          <el-form-item label="密码有效期（天，0 表示不启用）">
-            <el-input-number v-model="policy.passwordMaxAgeDays" :min="0" :max="3650" />
+          <el-form-item label="密码有效期（天，最少 90 天）">
+            <el-input-number v-model="policy.passwordMaxAgeDays" :min="90" :max="3650" />
           </el-form-item>
           <el-form-item label="失败锁定阈值">
             <el-input-number v-model="policy.loginFailureLimit" :min="3" :max="20" />
@@ -222,6 +259,45 @@ onMounted(() => {
           />
         </el-form-item>
       </el-form>
+    </el-card>
+
+    <el-card class="email-mfa-policy-card" shadow="never" v-loading="emailMfaPolicyLoading">
+      <template #header>
+        <div class="card-heading">
+          <div>
+            <strong>邮箱双因素认证策略</strong>
+            <span>安全管理员负责决定是否允许使用邮箱验证码登录；SMTP 服务由系统管理员配置。</span>
+          </div>
+          <el-button
+            type="primary"
+            :loading="emailMfaPolicySaving"
+            :disabled="!emailMfaPolicy.configured && !emailMfaPolicy.enabled"
+            @click="saveEmailMfaPolicy"
+          >
+            保存策略
+          </el-button>
+        </div>
+      </template>
+      <div class="email-mfa-policy__content">
+        <div>
+          <strong>{{ emailMfaPolicy.enabled ? "邮箱 MFA 已启用" : "邮箱 MFA 默认关闭" }}</strong>
+          <p>
+            {{
+              emailMfaPolicy.configured
+                ? "邮件服务已具备启用条件，开启后登录页会允许用户请求邮箱验证码。"
+                : "尚未检测到可用的邮件服务配置，请先联系系统管理员在系统配置中完成 SMTP 配置并测试发信。"
+            }}
+          </p>
+        </div>
+        <el-switch
+          v-model="emailMfaPolicy.enabled"
+          :disabled="
+            (!emailMfaPolicy.configured && !emailMfaPolicy.enabled) || emailMfaPolicySaving
+          "
+          active-text="启用"
+          inactive-text="关闭"
+        />
+      </div>
     </el-card>
 
     <el-card class="role-card" shadow="never">
@@ -339,8 +415,29 @@ onMounted(() => {
 }
 
 .policy-card,
+.email-mfa-policy-card,
 .role-card {
   margin-bottom: 16px;
+}
+
+.email-mfa-policy__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.email-mfa-policy__content strong {
+  color: var(--ax-heading);
+  font-size: 14px;
+}
+
+.email-mfa-policy__content p {
+  max-width: 760px;
+  margin: 8px 0 0;
+  color: var(--ax-muted);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .policy-form {
@@ -440,7 +537,8 @@ onMounted(() => {
   }
 
   .page-heading,
-  .card-heading {
+  .card-heading,
+  .email-mfa-policy__content {
     align-items: flex-start;
     flex-direction: column;
   }

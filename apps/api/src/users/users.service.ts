@@ -16,7 +16,9 @@ import type {
   DataScopeType,
   PageResult,
   PersonalDataExport,
+  PasswordStatus,
   PrivacyEraseRequest,
+  ResetUserPasswordRequest,
   SetupAdminRequest,
   UpdatePasswordRequest,
   UpdateProfileRequest,
@@ -31,6 +33,7 @@ import {
   getAccountPasswordPolicyError,
   getRoleDefinition,
   isAdministratorRole,
+  PASSWORD_EXPIRY_WARNING_DAYS,
   normalizePageQuery,
 } from "@admin-x/shared";
 
@@ -451,7 +454,17 @@ export class UsersService {
     return null;
   }
 
-  updatePassword(id: string, password: string, context?: AuditContext): void {
+  resetPassword(
+    id: string,
+    input: ResetUserPasswordRequest,
+    actor: AuthUser,
+    context?: AuditContext,
+  ): null {
+    this.updatePassword(id, input.newPassword, context, actor);
+    return null;
+  }
+
+  updatePassword(id: string, password: string, context?: AuditContext, actor?: AuthUser): void {
     const user = this.findRowById(id);
     if (!user) {
       throw new NotFoundException("用户不存在");
@@ -474,16 +487,53 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(hashPassword(password), now, id);
+    const auditActor = actor ? toAuditActor(actor) : toAuditActor(toAuthUser(user));
+    const isResetByAdministrator = Boolean(actor && actor.id !== id);
     this.database.addActivity({
-      action: "password.update",
-      actor: toAuditActor(toAuthUser(user)),
+      action: isResetByAdministrator ? "password.reset" : "password.update",
+      actor: auditActor,
       context,
-      description: `成员 ${user.display_name}（@${user.username}）的登录密码已更新，旧会话已失效`,
-      title: "更新了用户密码",
+      description: isResetByAdministrator
+        ? `${actor?.displayName}（@${actor?.username}）为成员 ${user.display_name}（@${user.username}）重置了登录密码，旧会话已失效`
+        : `成员 ${user.display_name}（@${user.username}）的登录密码已更新，旧会话已失效`,
+      title: isResetByAdministrator ? "重置了用户密码" : "更新了用户密码",
       type: "update",
       resource: "password",
       targetId: id,
     });
+  }
+
+  getPasswordStatus(id: string): PasswordStatus {
+    const row = this.findRowById(id);
+    if (!row) {
+      throw new NotFoundException("用户不存在");
+    }
+    const maxAgeDays = this.database.getSecurityPolicy().passwordMaxAgeDays;
+    const base = {
+      changedAt: row.password_changed_at,
+      expiringSoon: false,
+      expired: false,
+      maxAgeDays,
+    } satisfies PasswordStatus;
+    if (maxAgeDays <= 0) {
+      return base;
+    }
+
+    const changedAt = Date.parse(row.password_changed_at);
+    if (!Number.isFinite(changedAt)) {
+      return { ...base, expired: true };
+    }
+
+    const expiresAtTimestamp = changedAt + maxAgeDays * 86_400_000;
+    const daysRemaining = Math.ceil((expiresAtTimestamp - Date.now()) / 86_400_000);
+    const expired = daysRemaining <= 0;
+    return {
+      ...base,
+      daysRemaining,
+      expired,
+      expiresAt: new Date(expiresAtTimestamp).toISOString(),
+      expiringSoon: !expired && daysRemaining <= PASSWORD_EXPIRY_WARNING_DAYS,
+    };
   }
 
   exportPersonalData(id: string): PersonalDataExport {

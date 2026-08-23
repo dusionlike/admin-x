@@ -47,6 +47,12 @@ const router = createRouter({
           meta: { title: "安全策略", requiresAuth: true, permission: "security:manage" },
         },
         {
+          path: "system",
+          name: "system",
+          component: () => import("@/views/SystemView.vue"),
+          meta: { title: "系统配置", requiresAuth: true, permission: "system:manage" },
+        },
+        {
           path: "audit",
           name: "audit",
           component: () => import("@/views/AuditView.vue"),

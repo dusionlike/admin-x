@@ -18,6 +18,7 @@ import type {
   CreateUserRequest,
   PageResult,
   PersonalDataExport,
+  PasswordStatus,
   UserListQuery,
   UserRecord,
 } from "@admin-x/shared";
@@ -31,6 +32,7 @@ import { SensitiveActionGuard } from "../auth/sensitive-action.guard.js";
 import {
   CreateUserDto,
   PrivacyEraseDto,
+  ResetUserPasswordDto,
   UpdatePasswordDto,
   UpdateProfileDto,
   UpdateUserDataScopeDto,
@@ -78,6 +80,11 @@ export class UsersController {
     return createApiResponse(this.usersService.exportPersonalData(request.user.id));
   }
 
+  @Get("me/password-status")
+  passwordStatus(@Request() request: AuthenticatedRequest): ApiResponse<PasswordStatus> {
+    return createApiResponse(this.usersService.getPasswordStatus(request.user.id));
+  }
+
   @Post("me/privacy/erase")
   @UseGuards(AuthGuard, SensitiveActionGuard)
   erasePersonalData(
@@ -96,6 +103,19 @@ export class UsersController {
   ): ApiResponse<null> {
     return createApiResponse(
       this.usersService.updateCurrentPassword(request.user.id, body, getAuditContext(request)),
+    );
+  }
+
+  @Patch(":id/password")
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
+  @RequirePermissions("user:status")
+  resetPassword(
+    @Param("id") id: string,
+    @Body() body: ResetUserPasswordDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<null> {
+    return createApiResponse(
+      this.usersService.resetPassword(id, body, request.user, getAuditContext(request)),
     );
   }
 

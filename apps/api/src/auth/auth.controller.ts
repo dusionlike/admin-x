@@ -3,7 +3,9 @@ import { Body, Controller, Get, Inject, Post, Request, UseGuards } from "@nestjs
 import type {
   ApiResponse,
   AuthUser,
+  EmailMfaCodeResponse,
   LoginResponse,
+  MfaPublicConfig,
   MfaSetupResponse,
   MfaStatus,
   ReauthenticationResponse,
@@ -14,7 +16,9 @@ import { createApiResponse } from "@admin-x/shared";
 import { AuthGuard } from "./auth.guard.js";
 import type { AuthenticatedRequest } from "./auth.guard.js";
 import {
+  ChangeExpiredPasswordDto,
   LoginDto,
+  EmailMfaCodeRequestDto,
   MfaCodeDto,
   MfaDisableDto,
   MfaSetupDto,
@@ -47,6 +51,35 @@ export class AuthController {
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<LoginResponse> {
     return createApiResponse(this.authService.setupAdmin(body, getAuditContext(request)));
+  }
+
+  @Get("mfa/config")
+  mfaConfig(): ApiResponse<MfaPublicConfig> {
+    return createApiResponse(this.authService.getMfaPublicConfig());
+  }
+
+  @Post("mfa/email/request")
+  async requestEmailMfaCode(
+    @Body() body: EmailMfaCodeRequestDto,
+    @Request() request: AuthenticatedRequest,
+  ): Promise<ApiResponse<EmailMfaCodeResponse>> {
+    return createApiResponse(
+      await this.authService.requestEmailMfaCode(
+        body.username,
+        body.password,
+        getAuditContext(request),
+      ),
+    );
+  }
+
+  @Post("password/expired")
+  changeExpiredPassword(
+    @Body() body: ChangeExpiredPasswordDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<null> {
+    return createApiResponse(
+      this.authService.changeExpiredPassword(body, getAuditContext(request)),
+    );
   }
 
   @Get("me")

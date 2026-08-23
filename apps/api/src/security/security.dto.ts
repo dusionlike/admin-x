@@ -1,6 +1,21 @@
-import { IsArray, IsBoolean, IsInt, IsString, Max, MaxLength, Min } from "class-validator";
+import {
+  IsArray,
+  IsBoolean,
+  IsEmail,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from "class-validator";
 
-import type { SecurityPolicy } from "@admin-x/shared";
+import type {
+  SecurityPolicy,
+  UpdateEmailMfaPolicy,
+  UpdateEmailMfaTransportSettings,
+} from "@admin-x/shared";
 
 export class UpdateSecurityPolicyDto implements SecurityPolicy {
   @IsArray({ message: "允许来源 IP 必须是数组" })
@@ -32,7 +47,7 @@ export class UpdateSecurityPolicyDto implements SecurityPolicy {
   passwordMinLength!: number;
 
   @IsInt({ message: "密码有效期必须是整数" })
-  @Min(0, { message: "密码有效期不能为负数" })
+  @Min(90, { message: "密码有效期不能少于 90 天" })
   @Max(3650, { message: "密码有效期不能超过 3650 天" })
   passwordMaxAgeDays!: number;
 
@@ -43,4 +58,41 @@ export class UpdateSecurityPolicyDto implements SecurityPolicy {
   @Min(5, { message: "会话超时时间至少为 5 分钟" })
   @Max(480, { message: "会话超时时间不能超过 480 分钟" })
   sessionTimeoutMinutes!: number;
+}
+
+export class UpdateEmailMfaTransportDto implements UpdateEmailMfaTransportSettings {
+  @IsNotEmpty({ message: "SMTP 主机不能为空" })
+  @IsString({ message: "SMTP 主机必须是字符串" })
+  @MaxLength(255, { message: "SMTP 主机不能超过 255 个字符" })
+  smtpHost!: string;
+
+  @IsInt({ message: "SMTP 端口必须是整数" })
+  @Min(1, { message: "SMTP 端口至少为 1" })
+  @Max(65_535, { message: "SMTP 端口不能超过 65535" })
+  smtpPort!: number;
+
+  @IsBoolean({ message: "SMTP 加密配置不正确" })
+  smtpSecure!: boolean;
+
+  @IsString({ message: "SMTP 用户名必须是字符串" })
+  @MaxLength(200, { message: "SMTP 用户名不能超过 200 个字符" })
+  smtpUser!: string;
+
+  @IsOptional()
+  @IsString({ message: "SMTP 密码必须是字符串" })
+  @MaxLength(500, { message: "SMTP 密码不能超过 500 个字符" })
+  smtpPassword?: string;
+
+  @IsEmail({}, { message: "发件邮箱地址无效" })
+  fromEmail!: string;
+
+  @IsNotEmpty({ message: "发件人名称不能为空" })
+  @IsString({ message: "发件人名称必须是字符串" })
+  @MaxLength(100, { message: "发件人名称不能超过 100 个字符" })
+  fromName!: string;
+}
+
+export class UpdateEmailMfaPolicyDto implements UpdateEmailMfaPolicy {
+  @IsBoolean({ message: "邮箱 MFA 开关配置不正确" })
+  enabled!: boolean;
 }

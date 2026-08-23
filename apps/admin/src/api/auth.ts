@@ -1,7 +1,10 @@
 import type {
   AuthUser,
+  ChangeExpiredPasswordRequest,
+  EmailMfaCodeResponse,
   LoginRequest,
   LoginResponse,
+  MfaPublicConfig,
   MfaSetupResponse,
   MfaStatus,
   ReauthenticationResponse,
@@ -30,6 +33,26 @@ export const authApi = {
     return requestData<SetupStatus>({
       method: "GET",
       url: "/auth/setup-status",
+    });
+  },
+  mfaConfig() {
+    return requestData<MfaPublicConfig>({
+      method: "GET",
+      url: "/auth/mfa/config",
+    });
+  },
+  requestEmailCode(payload: { username: string; password: string }) {
+    return requestData<EmailMfaCodeResponse>({
+      data: payload,
+      method: "POST",
+      url: "/auth/mfa/email/request",
+    });
+  },
+  changeExpiredPassword(payload: ChangeExpiredPasswordRequest) {
+    return requestData<null>({
+      data: payload,
+      method: "POST",
+      url: "/auth/password/expired",
     });
   },
   me() {

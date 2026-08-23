@@ -1,6 +1,11 @@
-import { Body, Controller, Get, Inject, Patch, Request, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Patch, Post, Request, UseGuards } from "@nestjs/common";
 
-import type { ApiResponse, SecurityPolicy } from "@admin-x/shared";
+import type {
+  ApiResponse,
+  EmailMfaPolicyStatus,
+  EmailMfaSettings,
+  SecurityPolicy,
+} from "@admin-x/shared";
 import { createApiResponse } from "@admin-x/shared";
 
 import { AuthGuard } from "../auth/auth.guard.js";
@@ -8,7 +13,11 @@ import type { AuthenticatedRequest } from "../auth/auth.guard.js";
 import { PermissionGuard, RequirePermissions } from "../auth/permission.guard.js";
 import { getAuditContext } from "../auth/request-context.js";
 import { SensitiveActionGuard } from "../auth/sensitive-action.guard.js";
-import { UpdateSecurityPolicyDto } from "./security.dto.js";
+import {
+  UpdateEmailMfaPolicyDto,
+  UpdateEmailMfaTransportDto,
+  UpdateSecurityPolicyDto,
+} from "./security.dto.js";
 import { SecurityService } from "./security.service.js";
 
 @Controller("security")
@@ -30,6 +39,61 @@ export class SecurityController {
   ): ApiResponse<SecurityPolicy> {
     return createApiResponse(
       this.securityService.updatePolicy(body, request.user, getAuditContext(request)),
+    );
+  }
+
+  @Get("email-mfa")
+  @UseGuards(AuthGuard, PermissionGuard)
+  @RequirePermissions("system:manage")
+  emailMfaSettings(): ApiResponse<EmailMfaSettings> {
+    return createApiResponse(this.securityService.getEmailMfaSettings());
+  }
+
+  @Patch("email-mfa/transport")
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
+  @RequirePermissions("system:manage")
+  async updateEmailMfaTransport(
+    @Body() body: UpdateEmailMfaTransportDto,
+    @Request() request: AuthenticatedRequest,
+  ): Promise<ApiResponse<EmailMfaSettings>> {
+    return createApiResponse(
+      await this.securityService.updateEmailMfaTransport(
+        body,
+        request.user,
+        getAuditContext(request),
+      ),
+    );
+  }
+
+  @Post("email-mfa/test")
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
+  @RequirePermissions("system:manage")
+  async testEmailMfa(
+    @Request() request: AuthenticatedRequest,
+  ): Promise<ApiResponse<{ maskedEmail: string }>> {
+    return createApiResponse(
+      await this.securityService.testEmailMfa(request.user, getAuditContext(request)),
+    );
+  }
+
+  @Get("email-mfa/policy")
+  emailMfaPolicy(): ApiResponse<EmailMfaPolicyStatus> {
+    return createApiResponse(this.securityService.getEmailMfaPolicy());
+  }
+
+  @Patch("email-mfa/policy")
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
+  @RequirePermissions("security:manage")
+  async updateEmailMfaPolicy(
+    @Body() body: UpdateEmailMfaPolicyDto,
+    @Request() request: AuthenticatedRequest,
+  ): Promise<ApiResponse<EmailMfaPolicyStatus>> {
+    return createApiResponse(
+      await this.securityService.updateEmailMfaPolicy(
+        body.enabled,
+        request.user,
+        getAuditContext(request),
+      ),
     );
   }
 }

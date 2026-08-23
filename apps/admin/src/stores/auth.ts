@@ -24,12 +24,13 @@ export const useAuthStore = defineStore("auth", () => {
     user.value = readUser();
   }
 
-  async function login(payload: LoginRequest) {
+  async function login(payload: LoginRequest): Promise<LoginResponse> {
     loginLoading.value = true;
     try {
       clearReauthenticationToken();
       const result = await authApi.login(payload);
       setSession(result);
+      return result;
     } finally {
       loginLoading.value = false;
     }

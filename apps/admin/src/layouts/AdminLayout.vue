@@ -12,6 +12,7 @@ import {
   Fold,
   Lock,
   Odometer,
+  Setting,
   SwitchButton,
   User,
   UserFilled,
@@ -28,6 +29,7 @@ const collapsed = ref(false);
 const canViewAnalytics = computed(() => authStore.can("analytics:view"));
 const canViewUsers = computed(() => authStore.can("user:read"));
 const canManageSecurity = computed(() => authStore.can("security:manage"));
+const canManageSystem = computed(() => authStore.can("system:manage"));
 const canViewAudit = computed(() => authStore.can("audit:read"));
 const canViewCompliance = computed(() => authStore.can("compliance:read"));
 const roleLabel = computed(() => {
@@ -43,6 +45,9 @@ const activeMenu = computed(() => {
   }
   if (route.path.startsWith("/security")) {
     return "/security";
+  }
+  if (route.path.startsWith("/system")) {
+    return "/system";
   }
   if (route.path.startsWith("/audit")) {
     return "/audit";
@@ -137,6 +142,10 @@ function showNotifications() {
         <el-menu-item v-if="canManageSecurity" index="/security">
           <el-icon><Lock /></el-icon>
           <span class="menu-label">安全策略</span>
+        </el-menu-item>
+        <el-menu-item v-if="canManageSystem" index="/system">
+          <el-icon><Setting /></el-icon>
+          <span class="menu-label">系统配置</span>
         </el-menu-item>
         <el-menu-item v-if="canViewAudit" index="/audit">
           <el-icon><Document /></el-icon>

@@ -23,6 +23,27 @@ export interface AuditContext {
   userAgent?: string;
 }
 
+export interface StoredEmailMfaConfig {
+  enabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPasswordEncrypted: string;
+  fromEmail: string;
+  fromName: string;
+  updatedAt: string;
+}
+
+export interface EmailMfaChallenge {
+  id: string;
+  userId: string;
+  codeHash: string;
+  expiresAt: string;
+  attempts: number;
+  createdAt: string;
+}
+
 export interface StoredActivity {
   id: string;
   title: string;
@@ -123,6 +144,35 @@ const SCHEMA = `
   );
 
   INSERT OR IGNORE INTO security_policy (id, updated_at) VALUES (1, CURRENT_TIMESTAMP);
+
+  CREATE TABLE IF NOT EXISTS email_mfa_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    smtp_host TEXT NOT NULL DEFAULT '',
+    smtp_port INTEGER NOT NULL DEFAULT 587,
+    smtp_secure INTEGER NOT NULL DEFAULT 0,
+    smtp_user TEXT NOT NULL DEFAULT '',
+    smtp_password_encrypted TEXT NOT NULL DEFAULT '',
+    from_email TEXT NOT NULL DEFAULT '',
+    from_name TEXT NOT NULL DEFAULT 'Admin X',
+    updated_at TEXT NOT NULL
+  );
+
+  INSERT OR IGNORE INTO email_mfa_config (id, updated_at) VALUES (1, CURRENT_TIMESTAMP);
+
+  CREATE TABLE IF NOT EXISTS email_mfa_challenges (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL,
+    request_ip TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_email_mfa_challenges_user
+    ON email_mfa_challenges(user_id, created_at DESC);
 
   CREATE TABLE IF NOT EXISTS auth_sessions (
     id TEXT PRIMARY KEY,
@@ -729,6 +779,130 @@ export class DatabaseService implements OnModuleDestroy {
         JSON.stringify(policy.allowedIpRanges),
         new Date().toISOString(),
       );
+  }
+
+  getEmailMfaConfig(): StoredEmailMfaConfig {
+    const row = this.connection
+      .prepare(
+        `SELECT enabled, smtp_host, smtp_port, smtp_secure, smtp_user,
+                smtp_password_encrypted, from_email, from_name, updated_at
+         FROM email_mfa_config WHERE id = 1`,
+      )
+      .get() as SqlRow | undefined;
+    return {
+      enabled: Boolean(toNumber(row?.enabled)),
+      fromEmail: String(row?.from_email ?? ""),
+      fromName: String(row?.from_name || "Admin X"),
+      smtpHost: String(row?.smtp_host ?? ""),
+      smtpPasswordEncrypted: String(row?.smtp_password_encrypted ?? ""),
+      smtpPort: toNumber(row?.smtp_port) || 587,
+      smtpSecure: Boolean(toNumber(row?.smtp_secure)),
+      smtpUser: String(row?.smtp_user ?? ""),
+      updatedAt: String(row?.updated_at ?? ""),
+    };
+  }
+
+  updateEmailMfaConfig(input: {
+    enabled: boolean;
+    smtpHost: string;
+    smtpPort: number;
+    smtpSecure: boolean;
+    smtpUser: string;
+    smtpPasswordEncrypted: string;
+    fromEmail: string;
+    fromName: string;
+  }): void {
+    this.connection
+      .prepare(
+        `UPDATE email_mfa_config
+         SET enabled = ?, smtp_host = ?, smtp_port = ?, smtp_secure = ?, smtp_user = ?,
+             smtp_password_encrypted = ?, from_email = ?, from_name = ?, updated_at = ?
+         WHERE id = 1`,
+      )
+      .run(
+        input.enabled ? 1 : 0,
+        input.smtpHost,
+        input.smtpPort,
+        input.smtpSecure ? 1 : 0,
+        input.smtpUser,
+        input.smtpPasswordEncrypted,
+        input.fromEmail,
+        input.fromName,
+        new Date().toISOString(),
+      );
+  }
+
+  setEmailMfaEnabled(enabled: boolean): void {
+    this.connection
+      .prepare("UPDATE email_mfa_config SET enabled = ?, updated_at = ? WHERE id = 1")
+      .run(enabled ? 1 : 0, new Date().toISOString());
+  }
+
+  createEmailMfaChallenge(input: {
+    id: string;
+    userId: string;
+    codeHash: string;
+    expiresAt: string;
+    createdAt: string;
+    requestIp?: string;
+  }): void {
+    const now = new Date().toISOString();
+    this.connection
+      .prepare(
+        `UPDATE email_mfa_challenges
+         SET consumed_at = ?
+         WHERE user_id = ? AND consumed_at IS NULL`,
+      )
+      .run(now, input.userId);
+    this.connection
+      .prepare(
+        `INSERT INTO email_mfa_challenges
+          (id, user_id, code_hash, expires_at, attempts, consumed_at, created_at, request_ip)
+         VALUES (?, ?, ?, ?, 0, NULL, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.codeHash,
+        input.expiresAt,
+        input.createdAt,
+        input.requestIp ?? null,
+      );
+  }
+
+  getLatestEmailMfaChallenge(userId: string, includeConsumed = false): EmailMfaChallenge | null {
+    const consumedCondition = includeConsumed ? "" : "AND consumed_at IS NULL";
+    const row = this.connection
+      .prepare(
+        `SELECT id, user_id, code_hash, expires_at, attempts, created_at
+         FROM email_mfa_challenges
+         WHERE user_id = ? ${consumedCondition}
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(userId) as SqlRow | undefined;
+    if (!row) {
+      return null;
+    }
+    return {
+      attempts: toNumber(row.attempts),
+      codeHash: String(row.code_hash),
+      createdAt: String(row.created_at),
+      expiresAt: String(row.expires_at),
+      id: String(row.id),
+      userId: String(row.user_id),
+    };
+  }
+
+  incrementEmailMfaChallengeAttempts(id: string): void {
+    this.connection
+      .prepare("UPDATE email_mfa_challenges SET attempts = attempts + 1 WHERE id = ?")
+      .run(id);
+  }
+
+  consumeEmailMfaChallenge(id: string): void {
+    this.connection
+      .prepare("UPDATE email_mfa_challenges SET consumed_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), id);
   }
 
   createSession(userId: string, sessionId: string, expiresAt: string, limit: number): void {

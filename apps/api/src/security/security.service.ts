@@ -1,13 +1,23 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 
-import type { AuthUser, SecurityPolicy } from "@admin-x/shared";
+import type {
+  AuthUser,
+  EmailMfaPolicyStatus,
+  EmailMfaSettings,
+  SecurityPolicy,
+  UpdateEmailMfaTransportSettings,
+} from "@admin-x/shared";
 
+import { EmailMfaService } from "../auth/email-mfa.service.js";
 import type { AuditContext } from "../database/database.service.js";
 import { DatabaseService } from "../database/database.service.js";
 
 @Injectable()
 export class SecurityService {
-  constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
+  constructor(
+    @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Inject(EmailMfaService) private readonly emailMfaService: EmailMfaService,
+  ) {}
 
   getPolicy(): SecurityPolicy {
     return this.database.getSecurityPolicy();
@@ -29,11 +39,18 @@ export class SecurityService {
           `SELECT COUNT(*) AS count FROM users
            WHERE status = 'active'
              AND role NOT IN ('operator', 'readonly')
-             AND mfa_enabled = 0`,
+             AND mfa_enabled = 0
+             AND (
+               email = '' OR NOT EXISTS (
+                 SELECT 1 FROM email_mfa_config WHERE id = 1 AND enabled = 1
+               )
+             )`,
         )
         .get() as { count?: number | bigint } | undefined;
       if (Number(row?.count ?? 0) > 0) {
-        throw new BadRequestException("启用管理员 MFA 强制策略前，请先为所有管理员绑定 MFA");
+        throw new BadRequestException(
+          "启用管理员 MFA 强制策略前，请先为所有管理员绑定认证器 MFA，或先启用邮箱 MFA 并确认账号已配置邮箱",
+        );
       }
     }
 
@@ -56,6 +73,34 @@ export class SecurityService {
       resource: "security-policy",
     });
     return normalized;
+  }
+
+  getEmailMfaSettings(): EmailMfaSettings {
+    return this.emailMfaService.getSettings();
+  }
+
+  updateEmailMfaTransport(
+    input: UpdateEmailMfaTransportSettings,
+    actor: AuthUser,
+    context?: AuditContext,
+  ): Promise<EmailMfaSettings> {
+    return this.emailMfaService.updateTransportSettings(input, actor, context);
+  }
+
+  getEmailMfaPolicy(): EmailMfaPolicyStatus {
+    return this.emailMfaService.getPolicyStatus();
+  }
+
+  updateEmailMfaPolicy(
+    enabled: boolean,
+    actor: AuthUser,
+    context?: AuditContext,
+  ): Promise<EmailMfaPolicyStatus> {
+    return this.emailMfaService.setEnabled(enabled, actor, context);
+  }
+
+  testEmailMfa(actor: AuthUser, context?: AuditContext): Promise<{ maskedEmail: string }> {
+    return this.emailMfaService.testDelivery(actor, context);
   }
 }
 

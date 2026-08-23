@@ -184,6 +184,20 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
     { body: { role: "audit-admin" }, method: "PATCH" },
   );
   assert.equal(auditRoleUpdate.status, 200);
+  const systemCanResetPassword = await sensitiveRequest(
+    systemToken,
+    systemPassword,
+    `/users/${operatorId}/password`,
+    { body: { newPassword: auditPassword }, method: "PATCH" },
+  );
+  assert.equal(systemCanResetPassword.status, 200);
+  const securityCannotResetPassword = await sensitiveRequest(
+    securityToken,
+    securityPassword,
+    `/users/${operatorId}/password`,
+    { body: { newPassword: auditPassword }, method: "PATCH" },
+  );
+  assert.equal(securityCannotResetPassword.status, 403);
 
   let auditToken = tokenFrom(
     await request("/auth/login", {
@@ -296,6 +310,25 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   assert.equal(auditCannotManageSecurity.status, 403);
   const systemCannotManageSecurity = await authorizedRequest("/security/policy", systemToken);
   assert.equal(systemCannotManageSecurity.status, 403);
+  const publicMfaConfig = await request("/auth/mfa/config");
+  assert.equal(publicMfaConfig.status, 200);
+  assert.equal((publicMfaConfig.body.data as JsonObject).emailEnabled, false);
+  const systemEmailSettings = await authorizedRequest("/security/email-mfa", systemToken);
+  assert.equal(systemEmailSettings.status, 200);
+  assert.equal((systemEmailSettings.body.data as JsonObject).enabled, false);
+  const securityCannotManageEmailTransport = await authorizedRequest(
+    "/security/email-mfa",
+    securityToken,
+  );
+  assert.equal(securityCannotManageEmailTransport.status, 403);
+  const securityEmailPolicy = await authorizedRequest("/security/email-mfa/policy", securityToken);
+  assert.equal(securityEmailPolicy.status, 200);
+  assert.equal((securityEmailPolicy.body.data as JsonObject).enabled, false);
+  const systemCannotManageEmailPolicy = await authorizedRequest(
+    "/security/email-mfa/policy",
+    systemToken,
+  );
+  assert.equal(systemCannotManageEmailPolicy.status, 403);
   assert.equal((await authorizedRequest("/audit", auditToken)).status, 200);
 
   const localBackup = await sensitiveRequest(systemToken, systemPassword, "/compliance/backups", {

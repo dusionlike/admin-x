@@ -12,6 +12,7 @@ import {
 
 import type {
   CreateUserRequest,
+  ResetUserPasswordRequest,
   UpdatePasswordRequest,
   UpdateProfileRequest,
   UpdateUserDataScopeRequest,
@@ -106,6 +107,13 @@ export class UpdatePasswordDto implements UpdatePasswordRequest {
   @IsString({ message: "当前密码必须是字符串" })
   currentPassword!: string;
 
+  @IsNotEmpty({ message: "新密码不能为空" })
+  @IsString({ message: "新密码必须是字符串" })
+  @MinLength(8, { message: "新密码长度不能少于 8 位" })
+  newPassword!: string;
+}
+
+export class ResetUserPasswordDto implements ResetUserPasswordRequest {
   @IsNotEmpty({ message: "新密码不能为空" })
   @IsString({ message: "新密码必须是字符串" })
   @MinLength(8, { message: "新密码长度不能少于 8 位" })

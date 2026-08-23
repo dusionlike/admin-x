@@ -10,16 +10,31 @@ import type {
   UpdateUserDataScopeRequest,
   UpdateUserRoleRequest,
   PersonalDataExport,
+  PasswordStatus,
+  ResetUserPasswordRequest,
 } from "@admin-x/shared";
 
 import { requestData } from "./http";
 
 export const usersApi = {
+  passwordStatus() {
+    return requestData<PasswordStatus>({
+      method: "GET",
+      url: "/users/me/password-status",
+    });
+  },
   updatePassword(payload: UpdatePasswordRequest) {
     return requestData<null>({
       data: payload,
       method: "PATCH",
       url: "/users/me/password",
+    });
+  },
+  resetPassword(id: string, payload: ResetUserPasswordRequest) {
+    return requestData<null>({
+      data: payload,
+      method: "PATCH",
+      url: `/users/${id}/password`,
     });
   },
   updateProfile(payload: UpdateProfileRequest) {

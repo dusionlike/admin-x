@@ -8,6 +8,7 @@ import { ArrowRight, Camera, Lock, Message, Setting, UserFilled } from "@element
 import type {
   MfaSetupResponse,
   MfaStatus,
+  PasswordStatus,
   UpdatePasswordRequest,
   UpdateProfileRequest,
   UserRole,
@@ -38,6 +39,7 @@ const mfaPassword = ref("");
 const mfaCode = ref("");
 const mfaSetup = ref<MfaSetupResponse | null>(null);
 const mfaStatus = ref<MfaStatus>({ configured: false, enabled: false });
+const passwordStatus = ref<PasswordStatus | null>(null);
 const avatarInput = ref<HTMLInputElement>();
 const formRef = ref<FormInstance>();
 const passwordFormRef = ref<FormInstance>();
@@ -128,6 +130,14 @@ async function loadMfaStatus() {
     mfaStatus.value = await authApi.mfaStatus();
   } catch {
     // The account page remains usable if an older API does not expose MFA yet.
+  }
+}
+
+async function loadPasswordStatus() {
+  try {
+    passwordStatus.value = await usersApi.passwordStatus();
+  } catch {
+    // The account page remains usable if an older API does not expose password status yet.
   }
 }
 
@@ -310,6 +320,7 @@ async function savePassword() {
 
 onMounted(() => {
   void loadMfaStatus();
+  void loadPasswordStatus();
 });
 </script>
 
@@ -323,6 +334,17 @@ onMounted(() => {
       </div>
       <el-button type="primary" plain @click="openEdit">编辑资料</el-button>
     </div>
+
+    <el-alert
+      v-if="passwordStatus?.expiringSoon"
+      class="password-expiry-alert"
+      :closable="false"
+      show-icon
+      title="登录密码即将到期"
+      type="warning"
+    >
+      当前密码将在 {{ passwordStatus.daysRemaining }} 天后到期，请及时修改。
+    </el-alert>
 
     <div class="profile-grid">
       <el-card class="profile-card profile-card--identity" shadow="never">
@@ -557,7 +579,7 @@ onMounted(() => {
             type="password"
             show-password
             autocomplete="new-password"
-            placeholder="至少 8 位，需满足复杂度要求"
+            placeholder="至少 8 位，需满足四类字符要求"
           />
         </el-form-item>
         <el-form-item label="确认新密码" prop="confirmPassword">
@@ -571,7 +593,7 @@ onMounted(() => {
         </el-form-item>
         <div class="password-hint">
           普通成员密码至少 8 位，管理员密码至少 12
-          位，并包含数字、大小写字母、特殊字符中的至少三类。
+          位，并同时包含数字、大写字母、小写字母和特殊字符。
           修改成功后当前登录状态仍会保留，下次登录请使用新密码。
         </div>
       </el-form>

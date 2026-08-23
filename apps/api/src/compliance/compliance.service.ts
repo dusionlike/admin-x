@@ -75,7 +75,7 @@ export class ComplianceService {
         "身份鉴别",
         "口令长度、复杂度和 90 天更换周期必须可配置",
         policy.passwordMinLength >= 8 && policy.passwordMaxAgeDays >= 90,
-        `当前最小长度 ${policy.passwordMinLength} 位，有效期 ${policy.passwordMaxAgeDays} 天；管理员账号额外要求至少 12 位。`,
+        `服务端统一要求大小写字母、数字和特殊字符四类组合；当前最小长度 ${policy.passwordMinLength} 位，有效期 ${policy.passwordMaxAgeDays} 天；管理员账号额外要求至少 12 位。`,
       ),
       this.check(
         3,

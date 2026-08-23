@@ -22,16 +22,21 @@ import {
 import { usersApi } from "@/api/users";
 import { useAuthStore } from "@/stores/auth";
 
+type ResetPasswordForm = { confirmPassword: string; newPassword: string };
+
 const authStore = useAuthStore();
 const loading = ref(false);
 const dialogVisible = ref(false);
 const roleDialogVisible = ref(false);
 const scopeDialogVisible = ref(false);
+const resetPasswordDialogVisible = ref(false);
 const formLoading = ref(false);
 const roleFormLoading = ref(false);
 const scopeFormLoading = ref(false);
+const resetPasswordLoading = ref(false);
 const tableData = ref<UserRecord[]>([]);
 const formRef = ref<FormInstance>();
+const resetPasswordFormRef = ref<FormInstance>();
 const query = reactive<UserListQuery>({
   keyword: "",
   page: 1,
@@ -68,6 +73,11 @@ const scopeForm = reactive<{
   id: "",
   ids: "",
   type: "assigned",
+});
+const resetPasswordTarget = reactive({ displayName: "", id: "" });
+const resetPasswordForm = reactive<ResetPasswordForm>({
+  confirmPassword: "",
+  newPassword: "",
 });
 const canCreateUsers = computed(() => authStore.can("user:create"));
 const canManageStatus = computed(() => authStore.can("user:status"));
@@ -155,6 +165,37 @@ const formRules: FormRules<CreateUserRequest> = {
   username: [
     { message: "请输入用户名", required: true, trigger: "blur" },
     { min: 3, message: "用户名至少 3 个字符", trigger: "blur" },
+  ],
+};
+
+const resetPasswordRules: FormRules<ResetPasswordForm> = {
+  confirmPassword: [
+    { message: "请再次输入新密码", required: true, trigger: "blur" },
+    {
+      trigger: "blur",
+      validator: (_rule, value, callback) => {
+        callback(
+          value === resetPasswordForm.newPassword ? undefined : new Error("两次输入的密码不一致"),
+        );
+      },
+    },
+  ],
+  newPassword: [
+    { message: "请输入新密码", required: true, trigger: "blur" },
+    {
+      trigger: "blur",
+      validator: (_rule, value, callback) => {
+        if (!value) {
+          callback();
+          return;
+        }
+        const error = getAccountPasswordPolicyError(String(value), {
+          username: tableData.value.find((user) => user.id === resetPasswordTarget.id)?.username,
+          role: tableData.value.find((user) => user.id === resetPasswordTarget.id)?.role,
+        });
+        callback(error ? new Error(error) : undefined);
+      },
+    },
   ],
 };
 
@@ -367,6 +408,34 @@ async function unlockUser(row: UserRecord) {
   }
 }
 
+function openResetPasswordDialog(row: UserRecord) {
+  resetPasswordTarget.displayName = row.displayName;
+  resetPasswordTarget.id = row.id;
+  resetPasswordForm.newPassword = "";
+  resetPasswordForm.confirmPassword = "";
+  resetPasswordDialogVisible.value = true;
+}
+
+async function handleResetPassword() {
+  const valid = await resetPasswordFormRef.value?.validate().catch(() => false);
+  if (!valid || !(await confirmSensitiveAction())) {
+    return;
+  }
+  resetPasswordLoading.value = true;
+  try {
+    await usersApi.resetPassword(resetPasswordTarget.id, {
+      newPassword: resetPasswordForm.newPassword,
+    });
+    resetPasswordDialogVisible.value = false;
+    ElMessage.success(`已重置 ${resetPasswordTarget.displayName} 的登录密码`);
+    await loadUsers();
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "重置用户密码失败"));
+  } finally {
+    resetPasswordLoading.value = false;
+  }
+}
+
 async function removeUser(row: UserRecord) {
   try {
     await ElMessageBox.confirm(
@@ -471,7 +540,7 @@ void loadUsers();
           v-if="canManageStatus || canDeleteUsers || canAssignRoles || canManageDataScope"
           fixed="right"
           label="操作"
-          width="340"
+          width="420"
         >
           <template #default="{ row }">
             <div class="user-actions">
@@ -480,6 +549,14 @@ void loadUsers();
               </el-button>
               <el-button v-if="canManageStatus" text type="warning" @click="unlockUser(row)">
                 解锁
+              </el-button>
+              <el-button
+                v-if="canManageStatus"
+                text
+                type="warning"
+                @click="openResetPasswordDialog(row)"
+              >
+                重置密码
               </el-button>
               <el-button v-if="canAssignRoles" text type="primary" @click="openRoleDialog(row)">
                 分配角色
@@ -542,14 +619,14 @@ void loadUsers();
             v-model="form.password"
             type="password"
             show-password
-            placeholder="至少 8 位，需满足复杂度要求"
+            placeholder="至少 8 位，需满足四类字符要求"
           />
         </el-form-item>
         <p class="password-policy-hint">
           {{
             form.role === "security-admin"
-              ? "首位安全管理员密码至少 12 位，并包含数字、大小写字母、特殊字符中的至少三类。"
-              : "普通成员密码至少 8 位，并包含数字、大小写字母、特殊字符中的至少三类。"
+              ? "首位安全管理员密码至少 12 位，并同时包含数字、大写字母、小写字母和特殊字符。"
+              : "普通成员密码至少 8 位，并同时包含数字、大写字母、小写字母和特殊字符。"
           }}
         </p>
         <el-form-item prop="privacyNoticeAccepted">
@@ -617,6 +694,50 @@ void loadUsers();
         <el-button @click="roleDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="roleFormLoading" @click="handleRoleUpdate">
           保存角色
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="resetPasswordDialogVisible"
+      title="重置用户密码"
+      width="440px"
+      destroy-on-close
+    >
+      <p class="role-dialog-copy">
+        将为「{{
+          resetPasswordTarget.displayName
+        }}」设置新密码，操作完成后该账号的旧会话会立即失效。
+      </p>
+      <el-form
+        ref="resetPasswordFormRef"
+        :model="resetPasswordForm"
+        :rules="resetPasswordRules"
+        label-position="top"
+      >
+        <el-form-item label="新密码" prop="newPassword">
+          <el-input
+            v-model="resetPasswordForm.newPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            placeholder="需满足账号对应的四类字符要求"
+          />
+        </el-form-item>
+        <el-form-item label="确认新密码" prop="confirmPassword">
+          <el-input
+            v-model="resetPasswordForm.confirmPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            placeholder="请再次输入新密码"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="resetPasswordDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="resetPasswordLoading" @click="handleResetPassword">
+          确认重置
         </el-button>
       </template>
     </el-dialog>

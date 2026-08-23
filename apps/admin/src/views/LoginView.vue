@@ -12,6 +12,7 @@ import ThemeToggleButton from "@/components/ThemeToggleButton.vue";
 import { useAuthStore } from "@/stores/auth";
 
 type SetupForm = SetupAdminRequest & { confirmPassword: string };
+type ExpiredPasswordForm = { confirmPassword: string; newPassword: string };
 
 const router = useRouter();
 const route = useRoute();
@@ -21,6 +22,12 @@ const setupFormRef = ref<FormInstance>();
 const checkingSetup = ref(true);
 const needsSetup = ref(false);
 const setupLoading = ref(false);
+const emailMfaEnabled = ref(false);
+const emailCodeLoading = ref(false);
+const emailCodeHint = ref("");
+const expiredPasswordVisible = ref(false);
+const expiredPasswordLoading = ref(false);
+const expiredPasswordFormRef = ref<FormInstance>();
 const form = reactive<LoginRequest>({
   mfaCode: "",
   password: "",
@@ -33,6 +40,10 @@ const setupForm = reactive<SetupForm>({
   password: "",
   privacyNoticeAccepted: false,
   username: "",
+});
+const expiredPasswordForm = reactive<ExpiredPasswordForm>({
+  confirmPassword: "",
+  newPassword: "",
 });
 
 const loginRules: FormRules<LoginRequest> = {
@@ -90,6 +101,36 @@ const setupRules: FormRules<SetupForm> = {
   ],
 };
 
+const expiredPasswordRules: FormRules<ExpiredPasswordForm> = {
+  confirmPassword: [
+    { message: "请再次输入新密码", required: true, trigger: "blur" },
+    {
+      trigger: "blur",
+      validator: (_rule, value, callback) => {
+        callback(
+          value === expiredPasswordForm.newPassword ? undefined : new Error("两次输入的密码不一致"),
+        );
+      },
+    },
+  ],
+  newPassword: [
+    { message: "请输入新密码", required: true, trigger: "blur" },
+    {
+      trigger: "blur",
+      validator: (_rule, value, callback) => {
+        if (!value) {
+          callback();
+          return;
+        }
+        const error = getAccountPasswordPolicyError(String(value), {
+          username: form.username,
+        });
+        callback(error ? new Error(error) : undefined);
+      },
+    },
+  ],
+};
+
 async function loadSetupStatus() {
   try {
     const result = await authApi.setupStatus();
@@ -98,6 +139,21 @@ async function loadSetupStatus() {
     ElMessage.error(getErrorMessage(error, "无法读取管理中心初始化状态"));
   } finally {
     checkingSetup.value = false;
+  }
+}
+
+async function loadMfaConfig() {
+  try {
+    const result = await authApi.mfaConfig();
+    emailMfaEnabled.value = result.emailEnabled;
+    if (result.emailEnabled && !form.mfaMethod) {
+      form.mfaMethod = "email";
+    } else if (!result.emailEnabled) {
+      form.mfaMethod = undefined;
+    }
+  } catch {
+    emailMfaEnabled.value = false;
+    form.mfaMethod = undefined;
   }
 }
 
@@ -116,12 +172,72 @@ async function handleLogin() {
     return;
   }
 
+  if (emailMfaEnabled.value && form.mfaMethod === "email" && !form.mfaCode) {
+    await requestEmailCode();
+    return;
+  }
+
   try {
-    await authStore.login(form);
+    const result = await authStore.login(form);
     await redirectToApp();
     ElMessage.success("欢迎回来，已进入 Admin X 管理后台");
+    if (result.passwordStatus?.expiringSoon && result.passwordStatus.daysRemaining) {
+      ElMessage.warning(`登录密码将在 ${result.passwordStatus.daysRemaining} 天后到期，请及时修改`);
+    }
   } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "登录失败，请检查账号或密码"));
+    const message = getErrorMessage(error, "登录失败，请检查账号或密码");
+    if (message.includes("密码已过期")) {
+      expiredPasswordForm.newPassword = "";
+      expiredPasswordForm.confirmPassword = "";
+      expiredPasswordVisible.value = true;
+      return;
+    }
+    ElMessage.error(message);
+  }
+}
+
+async function changeExpiredPassword() {
+  const valid = await expiredPasswordFormRef.value?.validate().catch(() => false);
+  if (!valid) {
+    return;
+  }
+  expiredPasswordLoading.value = true;
+  try {
+    await authApi.changeExpiredPassword({
+      currentPassword: form.password,
+      newPassword: expiredPasswordForm.newPassword,
+      username: form.username,
+    });
+    expiredPasswordVisible.value = false;
+    form.password = "";
+    form.mfaCode = "";
+    expiredPasswordForm.newPassword = "";
+    expiredPasswordForm.confirmPassword = "";
+    ElMessage.success("密码已更新，请使用新密码重新登录");
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "过期密码更新失败"));
+  } finally {
+    expiredPasswordLoading.value = false;
+  }
+}
+
+async function requestEmailCode() {
+  if (!form.username.trim() || !form.password) {
+    ElMessage.warning("请先填写用户名和密码，再获取邮箱验证码");
+    return;
+  }
+  emailCodeLoading.value = true;
+  try {
+    const result = await authApi.requestEmailCode({
+      password: form.password,
+      username: form.username,
+    });
+    emailCodeHint.value = `验证码已发送至 ${result.maskedEmail}，${result.expiresIn / 60} 分钟内有效`;
+    ElMessage.success("邮箱验证码已发送");
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "邮箱验证码发送失败"));
+  } finally {
+    emailCodeLoading.value = false;
   }
 }
 
@@ -156,6 +272,7 @@ async function handleSetup() {
 
 onMounted(() => {
   void loadSetupStatus();
+  void loadMfaConfig();
 });
 </script>
 
@@ -257,7 +374,7 @@ onMounted(() => {
             </el-input>
           </el-form-item>
           <p class="password-policy-hint">
-            管理员密码至少 12 位，并包含数字、大小写字母、特殊字符中的至少三类。
+            管理员密码至少 12 位，并同时包含数字、大写字母、小写字母和特殊字符。
           </p>
           <el-form-item label="确认密码" prop="confirmPassword">
             <el-input
@@ -326,14 +443,40 @@ onMounted(() => {
               ></template>
             </el-input>
           </el-form-item>
-          <el-form-item label="MFA 动态验证码（已绑定时填写）" prop="mfaCode">
+          <el-form-item v-if="emailMfaEnabled" label="登录认证方式">
+            <el-radio-group v-model="form.mfaMethod" class="login-mfa-methods">
+              <el-radio-button label="email">邮箱验证码</el-radio-button>
+              <el-radio-button label="totp">认证器验证码</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item
+            :label="form.mfaMethod === 'email' ? '邮箱验证码' : 'MFA 动态验证码（认证器）'"
+            prop="mfaCode"
+          >
             <el-input
               v-model="form.mfaCode"
               size="large"
               maxlength="6"
               autocomplete="one-time-code"
-              placeholder="请输入认证器当前的 6 位验证码"
-            />
+              :placeholder="
+                form.mfaMethod === 'email'
+                  ? '请输入邮箱收到的 6 位验证码'
+                  : '请输入认证器当前的 6 位验证码'
+              "
+            >
+              <template v-if="emailMfaEnabled && form.mfaMethod === 'email'" #append>
+                <el-button
+                  native-type="button"
+                  :loading="emailCodeLoading"
+                  @click="requestEmailCode"
+                >
+                  获取验证码
+                </el-button>
+              </template>
+            </el-input>
+            <small v-if="emailMfaEnabled && form.mfaMethod === 'email'" class="login-mfa-hint">
+              {{ emailCodeHint || "验证码会发送到当前账号绑定的邮箱" }}
+            </small>
           </el-form-item>
           <el-button
             class="login-submit"
@@ -348,6 +491,52 @@ onMounted(() => {
             </el-icon>
           </el-button>
         </el-form>
+
+        <el-dialog
+          v-model="expiredPasswordVisible"
+          title="密码已过期，请先更新密码"
+          width="min(460px, calc(100vw - 32px))"
+          append-to-body
+        >
+          <p class="expired-password-copy">
+            当前账号密码已超过安全有效期。请使用刚才填写的当前密码设置新密码，更新成功后再重新登录。
+          </p>
+          <el-form
+            ref="expiredPasswordFormRef"
+            :model="expiredPasswordForm"
+            :rules="expiredPasswordRules"
+            label-position="top"
+          >
+            <el-form-item label="新密码" prop="newPassword">
+              <el-input
+                v-model="expiredPasswordForm.newPassword"
+                type="password"
+                show-password
+                autocomplete="new-password"
+                placeholder="至少 8 位，需满足四类字符要求"
+              />
+            </el-form-item>
+            <el-form-item label="确认新密码" prop="confirmPassword">
+              <el-input
+                v-model="expiredPasswordForm.confirmPassword"
+                type="password"
+                show-password
+                autocomplete="new-password"
+                placeholder="请再次输入新密码"
+              />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="expiredPasswordVisible = false">取消</el-button>
+            <el-button
+              type="primary"
+              :loading="expiredPasswordLoading"
+              @click="changeExpiredPassword"
+            >
+              更新密码
+            </el-button>
+          </template>
+        </el-dialog>
       </div>
       <p class="login-panel__tip">
         {{
@@ -638,6 +827,26 @@ html.dark .login-form :deep(.el-input__suffix-inner) {
   align-items: center;
   justify-content: space-between;
   margin: -4px 0 24px;
+}
+
+.login-mfa-methods {
+  width: 100%;
+}
+
+.login-mfa-methods :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.login-mfa-methods :deep(.el-radio-button__inner) {
+  width: 100%;
+}
+
+.login-mfa-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--ax-muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .login-form__options :deep(.el-checkbox__label) {

@@ -44,7 +44,10 @@ test("enforces the account password baseline by role", () => {
   );
   expect(getAccountPasswordPolicyError("Aa1!short", { role: "operator" })).toBeNull();
   expect(getAccountPasswordPolicyError("longpassword", { role: "operator" })).toBe(
-    "密码至少包含数字、大小写字母、特殊字符中的三类",
+    "密码必须同时包含数字、大写字母、小写字母和特殊字符",
+  );
+  expect(getAccountPasswordPolicyError("lowercase123!", { role: "operator" })).toBe(
+    "密码必须同时包含数字、大写字母、小写字母和特殊字符",
   );
   expect(getAccountPasswordPolicyError("Abcd1234!", { role: "operator" })).toBe(
     "密码过于简单，请避免使用连续字符",

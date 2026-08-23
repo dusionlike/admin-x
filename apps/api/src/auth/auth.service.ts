@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -11,10 +12,13 @@ import jwt from "jsonwebtoken";
 
 import type {
   AuthUser,
+  ChangeExpiredPasswordRequest,
   LoginRequest,
   LoginResponse,
+  MfaPublicConfig,
   MfaSetupResponse,
   MfaStatus,
+  PasswordStatus,
   ReauthenticationResponse,
   SetupAdminRequest,
   SetupStatus,
@@ -23,6 +27,7 @@ import type {
 import { DatabaseService } from "../database/database.service.js";
 import type { AuditContext } from "../database/database.service.js";
 import { generateMfaSecret, createMfaOtpAuthUrl, verifyMfaCode } from "./mfa.js";
+import { EmailMfaService } from "./email-mfa.service.js";
 import { verifyPassword } from "./password.js";
 import { issueReauthenticationToken, REAUTHENTICATION_EXPIRES_IN } from "./reauth.js";
 import { UsersService } from "../users/users.service.js";
@@ -36,6 +41,7 @@ export class AuthService {
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(UsersService) private readonly usersService: UsersService,
+    @Inject(EmailMfaService) private readonly emailMfaService: EmailMfaService,
   ) {}
 
   getSetupStatus(): SetupStatus {
@@ -53,81 +59,115 @@ export class AuthService {
   }
 
   login(input: LoginRequest, context?: AuditContext): LoginResponse {
-    const username = input.username.trim();
-    const policy = this.database.getSecurityPolicy();
-    if (!isIpAllowed(context?.ipAddress, policy.allowedIpRanges)) {
-      this.usersService.recordLoginFailure(username, "来源 IP 不在允许范围内", context);
-      throw new UnauthorizedException("用户名或密码错误");
-    }
+    const { credentials, policy } = this.authenticatePrimaryCredentials(
+      input.username,
+      input.password,
+      context,
+    );
+    const emailEnabled = this.database.getEmailMfaConfig().enabled;
+    const mfaMethod =
+      input.mfaMethod ??
+      (credentials.user.mfaEnabled ? "totp" : emailEnabled ? "email" : undefined);
+    let mfaSatisfied = false;
 
-    const credentials = this.usersService.findCredentials(username);
-    if (!credentials) {
-      this.usersService.recordLoginFailure(username, "账号不存在或密码错误", context);
-      throw new UnauthorizedException("用户名或密码错误");
-    }
-
-    if (isLocked(credentials.lockedUntil)) {
-      this.usersService.recordLoginFailure(
-        username,
-        "账号仍处于锁定期",
-        context,
-        credentials.lockedUntil ?? undefined,
-      );
-      throw new HttpException("账号已被临时锁定，请稍后再试", HttpStatus.TOO_MANY_REQUESTS);
-    }
-
-    if (!verifyPassword(input.password, credentials.passwordHash)) {
-      this.failLogin(
-        credentials,
-        "用户名或密码错误",
-        context,
-        policy.loginFailureLimit,
-        policy.lockoutMinutes,
-      );
+    if (mfaMethod === "email") {
+      if (!emailEnabled) {
+        this.failLogin(
+          credentials,
+          "邮箱 MFA 未启用",
+          context,
+          policy.loginFailureLimit,
+          policy.lockoutMinutes,
+        );
+      }
+      if (!this.emailMfaService.verifyCode(credentials.user.id, input.mfaCode ?? "")) {
+        this.failLogin(
+          credentials,
+          "邮箱 MFA 验证码错误",
+          context,
+          policy.loginFailureLimit,
+          policy.lockoutMinutes,
+        );
+      }
+      mfaSatisfied = true;
+    } else if (mfaMethod === "totp" || credentials.user.mfaEnabled) {
+      if (
+        !credentials.user.mfaEnabled ||
+        !verifyMfaCode(this.usersService.getMfaSecret(credentials.user.id), input.mfaCode ?? "")
+      ) {
+        this.failLogin(
+          credentials,
+          "MFA 验证码错误",
+          context,
+          policy.loginFailureLimit,
+          policy.lockoutMinutes,
+        );
+      }
+      mfaSatisfied = true;
     }
 
     if (
-      credentials.user.mfaEnabled &&
-      !verifyMfaCode(this.usersService.getMfaSecret(credentials.user.id), input.mfaCode ?? "")
+      isAdministrator(credentials.user.role) &&
+      policy.mfaRequiredForAdministrators &&
+      !mfaSatisfied
     ) {
-      this.failLogin(
-        credentials,
-        "MFA 验证码错误",
+      this.usersService.recordLoginFailure(
+        credentials.user.username,
+        "管理员账号未完成 MFA",
         context,
-        policy.loginFailureLimit,
-        policy.lockoutMinutes,
       );
-    }
-
-    if (isAdministrator(credentials.user.role) && policy.mfaRequiredForAdministrators) {
-      if (!credentials.user.mfaEnabled) {
-        this.usersService.recordLoginFailure(username, "管理员账号未绑定 MFA", context);
-        throw new ForbiddenException("管理员账号必须先绑定 MFA 后才能登录");
-      }
-    }
-
-    if (isPasswordExpired(credentials.passwordChangedAt, policy.passwordMaxAgeDays)) {
-      this.usersService.recordLoginFailure(username, "密码已超过有效期", context);
-      throw new ForbiddenException("密码已过期，请联系系统管理员重置");
+      throw new ForbiddenException("管理员账号必须先完成 MFA 验证后才能登录");
     }
 
     const authenticatedUser = this.usersService.findAuthenticatedUser(credentials.user.id);
     if (!authenticatedUser || authenticatedUser.status !== "active") {
-      this.usersService.recordLoginFailure(
-        username,
-        authenticatedUser?.status === "suspended" ? "账号已停用" : "账号尚未激活",
-        context,
-      );
-      throw new UnauthorizedException(
-        authenticatedUser?.status === "suspended" ? "账号已停用" : "账号尚未激活",
-      );
+      throw new UnauthorizedException("登录状态已失效，请重新登录");
     }
 
     this.usersService.markLogin(credentials.user.id, credentials.user, context);
     return this.issueToken(
       { ...credentials.user, lastLoginAt: new Date().toISOString() },
       authenticatedUser.sessionVersion,
+      mfaSatisfied,
     );
+  }
+
+  getMfaPublicConfig(): MfaPublicConfig {
+    return this.emailMfaService.getPublicConfig();
+  }
+
+  requestEmailMfaCode(username: string, password: string, context?: AuditContext) {
+    if (!this.database.getEmailMfaConfig().enabled) {
+      throw new UnauthorizedException("邮箱 MFA 当前未启用");
+    }
+    const { credentials } = this.authenticatePrimaryCredentials(username, password, context);
+    return this.emailMfaService.issueCode(credentials.user, context);
+  }
+
+  changeExpiredPassword(input: ChangeExpiredPasswordRequest, context?: AuditContext): null {
+    const { credentials } = this.authenticatePrimaryCredentials(
+      input.username,
+      input.currentPassword,
+      context,
+      { allowExpired: true },
+    );
+    if (
+      !isPasswordExpired(
+        credentials.passwordChangedAt,
+        this.database.getSecurityPolicy().passwordMaxAgeDays,
+      )
+    ) {
+      throw new ConflictException("当前密码尚未过期，请登录后在个人资料中修改");
+    }
+    if (input.currentPassword === input.newPassword) {
+      throw new ConflictException("新密码不能与当前密码相同");
+    }
+    this.usersService.updatePassword(credentials.user.id, input.newPassword, context);
+    return null;
+  }
+
+  getPasswordStatus(userId: string): PasswordStatus {
+    return this.usersService.getPasswordStatus(userId);
   }
 
   authenticate(token: string, context?: AuditContext): AuthUser {
@@ -167,7 +207,7 @@ export class AuthService {
       if (
         policy.mfaRequiredForAdministrators &&
         isAdministrator(authenticatedUser.user.role) &&
-        !authenticatedUser.user.mfaEnabled
+        payload.mfaVerified !== true
       ) {
         throw new Error("MFA is required");
       }
@@ -276,6 +316,67 @@ export class AuthService {
     return this.usersService.getMfaStatus(userId);
   }
 
+  private authenticatePrimaryCredentials(
+    usernameInput: string,
+    password: string,
+    context?: AuditContext,
+    options: { allowExpired?: boolean } = {},
+  ): { credentials: LoginCredentials; policy: ReturnType<DatabaseService["getSecurityPolicy"]> } {
+    const username = usernameInput.trim();
+    const policy = this.database.getSecurityPolicy();
+    if (!isIpAllowed(context?.ipAddress, policy.allowedIpRanges)) {
+      this.usersService.recordLoginFailure(username, "来源 IP 不在允许范围内", context);
+      throw new UnauthorizedException("用户名或密码错误");
+    }
+
+    const credentials = this.usersService.findCredentials(username);
+    if (!credentials) {
+      this.usersService.recordLoginFailure(username, "账号不存在或密码错误", context);
+      throw new UnauthorizedException("用户名或密码错误");
+    }
+
+    if (isLocked(credentials.lockedUntil)) {
+      this.usersService.recordLoginFailure(
+        username,
+        "账号仍处于锁定期",
+        context,
+        credentials.lockedUntil ?? undefined,
+      );
+      throw new HttpException("账号已被临时锁定，请稍后再试", HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    if (!verifyPassword(password, credentials.passwordHash)) {
+      this.failLogin(
+        credentials,
+        "用户名或密码错误",
+        context,
+        policy.loginFailureLimit,
+        policy.lockoutMinutes,
+      );
+    }
+
+    if (
+      !options.allowExpired &&
+      isPasswordExpired(credentials.passwordChangedAt, policy.passwordMaxAgeDays)
+    ) {
+      this.usersService.recordLoginFailure(username, "密码已超过有效期", context);
+      throw new ForbiddenException("密码已过期，请在登录页更新密码后再登录");
+    }
+
+    const authenticatedUser = this.usersService.findAuthenticatedUser(credentials.user.id);
+    if (!authenticatedUser || authenticatedUser.status !== "active") {
+      this.usersService.recordLoginFailure(
+        username,
+        authenticatedUser?.status === "suspended" ? "账号已停用" : "账号尚未激活",
+        context,
+      );
+      throw new UnauthorizedException(
+        authenticatedUser?.status === "suspended" ? "账号已停用" : "账号尚未激活",
+      );
+    }
+    return { credentials, policy };
+  }
+
   private failLogin(
     credentials: LoginCredentials,
     reason: string,
@@ -300,7 +401,7 @@ export class AuthService {
     throw new UnauthorizedException("用户名或密码错误");
   }
 
-  private issueToken(user: AuthUser, sessionVersion: number): LoginResponse {
+  private issueToken(user: AuthUser, sessionVersion: number, mfaVerified = false): LoginResponse {
     const policy = this.database.getSecurityPolicy();
     const expiresIn = Math.max(
       5 * 60,
@@ -311,6 +412,7 @@ export class AuthService {
     const token = jwt.sign(
       {
         role: user.role,
+        mfaVerified,
         sessionVersion,
         username: user.username,
       },
@@ -323,7 +425,12 @@ export class AuthService {
     );
     this.database.createSession(user.id, sessionId, expiresAt, policy.concurrentSessionLimit);
 
-    return { expiresIn, token, user };
+    return {
+      expiresIn,
+      passwordStatus: this.usersService.getPasswordStatus(user.id),
+      token,
+      user,
+    };
   }
 }
 
@@ -336,11 +443,14 @@ function isLocked(value: string | null): boolean {
 }
 
 function isPasswordExpired(value: string, maxAgeDays: number): boolean {
-  if (!value || maxAgeDays <= 0) {
+  if (maxAgeDays <= 0) {
     return false;
   }
+  if (!value) {
+    return true;
+  }
   const changedAt = Date.parse(value);
-  return Number.isFinite(changedAt) && Date.now() - changedAt > maxAgeDays * 86_400_000;
+  return !Number.isFinite(changedAt) || Date.now() - changedAt >= maxAgeDays * 86_400_000;
 }
 
 function isIpAllowed(ip: string | undefined, ranges: string[]): boolean {

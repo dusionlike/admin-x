@@ -263,6 +263,38 @@ test("updates the current password only after verifying the old password", () =>
   database.onModuleDestroy();
 });
 
+test("reports password expiry and lets a system administrator reset a member password", () => {
+  const database = new DatabaseService(":memory:");
+  const service = new UsersService(database);
+  const admin = service.createAdmin({
+    displayName: "重置管理员",
+    email: "reset-admin@admin-x.dev",
+    password: "ResetAdmin123!",
+    username: "reset-admin",
+  });
+  const member = service.create({
+    displayName: "过期成员",
+    email: "expired-member@admin-x.dev",
+    password: "ExpiredMember123!",
+    role: "operator",
+    status: "active",
+    username: "expired-member",
+  });
+  const actor = service.findAuthenticatedUser(admin.id)?.user;
+
+  database.connection
+    .prepare("UPDATE users SET password_changed_at = ? WHERE id = ?")
+    .run(new Date(Date.now() - 80 * 86_400_000).toISOString(), member.id);
+  expect(service.getPasswordStatus(member.id).expiringSoon).toBe(true);
+
+  service.resetPassword(member.id, { newPassword: "ResetMember123!" }, actor!);
+  expect(service.getPasswordStatus(member.id).expired).toBe(false);
+  expect(
+    verifyPassword("ResetMember123!", service.findCredentials("expired-member")!.passwordHash),
+  ).toBe(true);
+  database.onModuleDestroy();
+});
+
 test("stores audit context and prevents audit records from being changed or deleted", () => {
   const database = new DatabaseService(":memory:");
   database.addActivity({

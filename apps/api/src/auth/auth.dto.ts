@@ -1,6 +1,7 @@
 import {
   IsBoolean,
   IsEmail,
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -8,7 +9,12 @@ import {
   MinLength,
 } from "class-validator";
 
-import type { LoginRequest, ReauthenticationRequest, SetupAdminRequest } from "@admin-x/shared";
+import type {
+  ChangeExpiredPasswordRequest,
+  LoginRequest,
+  ReauthenticationRequest,
+  SetupAdminRequest,
+} from "@admin-x/shared";
 
 export class LoginDto implements LoginRequest {
   @IsNotEmpty({ message: "用户名不能为空" })
@@ -24,6 +30,36 @@ export class LoginDto implements LoginRequest {
   @IsString({ message: "MFA 验证码必须是字符串" })
   @Matches(/^\d{6}$/, { message: "MFA 验证码应为 6 位数字" })
   mfaCode?: string;
+
+  @IsEnum(["totp", "email"], { message: "MFA 验证方式不正确" })
+  @IsOptional()
+  mfaMethod?: LoginRequest["mfaMethod"];
+}
+
+export class EmailMfaCodeRequestDto {
+  @IsNotEmpty({ message: "用户名不能为空" })
+  @IsString({ message: "用户名必须是字符串" })
+  username!: string;
+
+  @IsNotEmpty({ message: "密码不能为空" })
+  @IsString({ message: "密码必须是字符串" })
+  @MinLength(6, { message: "密码长度不能少于 6 位" })
+  password!: string;
+}
+
+export class ChangeExpiredPasswordDto implements ChangeExpiredPasswordRequest {
+  @IsNotEmpty({ message: "用户名不能为空" })
+  @IsString({ message: "用户名必须是字符串" })
+  username!: string;
+
+  @IsNotEmpty({ message: "当前密码不能为空" })
+  @IsString({ message: "当前密码必须是字符串" })
+  currentPassword!: string;
+
+  @IsNotEmpty({ message: "新密码不能为空" })
+  @IsString({ message: "新密码必须是字符串" })
+  @MinLength(8, { message: "新密码长度不能少于 8 位" })
+  newPassword!: string;
 }
 
 export class SetupAdminDto implements SetupAdminRequest {

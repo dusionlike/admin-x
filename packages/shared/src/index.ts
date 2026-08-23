@@ -8,6 +8,7 @@ export type UserRole =
   | "business-admin"
   | "operator"
   | "readonly";
+export type MfaMethod = "totp" | "email";
 export type UserStatus = "active" | "invited" | "suspended";
 export type DataScopeType = "all" | "organization" | "department" | "project" | "assigned" | "self";
 
@@ -175,6 +176,7 @@ export function isAdministratorRole(role: UserRole): boolean {
 
 export const ACCOUNT_PASSWORD_MIN_LENGTH = 8 as const;
 export const ADMIN_PASSWORD_MIN_LENGTH = 12 as const;
+export const PASSWORD_EXPIRY_WARNING_DAYS = 14 as const;
 
 const COMMON_ACCOUNT_PASSWORDS = new Set([
   "12345678",
@@ -237,8 +239,8 @@ export function getAccountPasswordPolicyError(
   const characterTypes = [/[a-z]/u, /[A-Z]/u, /\d/u, /[^\p{L}\p{N}\s]/u].filter((pattern) =>
     pattern.test(password),
   ).length;
-  if (characterTypes < 3) {
-    return "密码至少包含数字、大小写字母、特殊字符中的三类";
+  if (characterTypes < 4) {
+    return "密码必须同时包含数字、大写字母、小写字母和特殊字符";
   }
 
   return null;
@@ -280,12 +282,14 @@ export interface LoginRequest {
   username: string;
   password: string;
   mfaCode?: string;
+  mfaMethod?: MfaMethod;
 }
 
 export interface LoginResponse {
   token: string;
   user: AuthUser;
   expiresIn: number;
+  passwordStatus?: PasswordStatus;
 }
 
 export interface ReauthenticationRequest {
@@ -460,6 +464,57 @@ export interface SecurityPolicy {
   allowedIpRanges: string[];
 }
 
+export interface EmailMfaSettings {
+  enabled: boolean;
+  configured: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPasswordSet: boolean;
+  fromEmail: string;
+  fromName: string;
+  updatedAt?: string;
+}
+
+export interface EmailMfaTransportSettings {
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPasswordSet: boolean;
+  fromEmail: string;
+  fromName: string;
+}
+
+export interface UpdateEmailMfaTransportSettings {
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPassword?: string;
+  fromEmail: string;
+  fromName: string;
+}
+
+export interface EmailMfaPolicyStatus {
+  enabled: boolean;
+  configured: boolean;
+}
+
+export interface UpdateEmailMfaPolicy {
+  enabled: boolean;
+}
+
+export interface EmailMfaCodeResponse {
+  expiresIn: number;
+  maskedEmail: string;
+}
+
+export interface MfaPublicConfig {
+  emailEnabled: boolean;
+}
+
 export type ComplianceStatus = "pass" | "attention" | "fail";
 export type BackupTarget = "local" | "remote";
 export type BackupStatus = "running" | "success" | "failed";
@@ -567,6 +622,23 @@ export interface UpdateProfileRequest {
 export interface UpdatePasswordRequest {
   currentPassword: string;
   newPassword: string;
+}
+
+export interface ChangeExpiredPasswordRequest extends UpdatePasswordRequest {
+  username: string;
+}
+
+export interface ResetUserPasswordRequest {
+  newPassword: string;
+}
+
+export interface PasswordStatus {
+  changedAt: string;
+  expiresAt?: string;
+  maxAgeDays: number;
+  daysRemaining?: number;
+  expiringSoon: boolean;
+  expired: boolean;
 }
 
 export function createApiResponse<T>(data: T, message = "success"): ApiResponse<T> {

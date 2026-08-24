@@ -41,6 +41,11 @@ import { hashPassword, verifyPassword } from "../auth/password.js";
 import { decryptMfaSecret, encryptMfaSecret } from "../auth/mfa.js";
 import type { AuditContext } from "../database/database.service.js";
 import { DatabaseService } from "../database/database.service.js";
+import {
+  createSensitiveLookup,
+  decryptSensitive,
+  encryptSensitive,
+} from "../security/data-protection.js";
 
 interface UserRow {
   id: string;
@@ -103,32 +108,31 @@ export class UsersService {
       parameters.push(normalized.status);
     }
 
-    if (normalized.keyword) {
-      const keyword = `%${normalized.keyword}%`;
-      conditions.push(
-        "(lower(display_name) LIKE ? OR lower(username) LIKE ? OR lower(email) LIKE ?)",
-      );
-      parameters.push(keyword, keyword, keyword);
-    }
-
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const start = (normalized.page - 1) * normalized.pageSize;
     const rows = this.database.connection
       .prepare(
         `SELECT ${USER_COLUMNS}
          FROM users
          ${whereClause}
-         ORDER BY created_at DESC
-         LIMIT ? OFFSET ?`,
+         ORDER BY created_at DESC`,
       )
-      .all(...parameters, normalized.pageSize, start) as unknown as UserRow[];
-    const countRow = this.database.connection
-      .prepare(`SELECT COUNT(*) AS count FROM users ${whereClause}`)
-      .get(...parameters) as { count?: number | bigint } | undefined;
+      .all(...parameters)
+      .map((row) => decryptUserRow(row as unknown as UserRow));
+    const keyword = normalized.keyword.toLowerCase();
+    const filteredRows = keyword
+      ? rows.filter((row) =>
+          [row.display_name, row.username, row.email].some((value) =>
+            value.toLowerCase().includes(keyword),
+          ),
+        )
+      : rows;
+    const start = (normalized.page - 1) * normalized.pageSize;
 
     return {
-      items: rows.map((row) => toPublicRecord(row)),
-      meta: createPageMeta(toNumber(countRow?.count), normalized.page, normalized.pageSize),
+      items: filteredRows
+        .slice(start, start + normalized.pageSize)
+        .map((row) => toPublicRecord(row)),
+      meta: createPageMeta(filteredRows.length, normalized.page, normalized.pageSize),
     };
   }
 
@@ -410,8 +414,8 @@ export class UsersService {
       throw new BadRequestException("显示名称不能为空");
     }
     const duplicate = this.database.connection
-      .prepare("SELECT id FROM users WHERE lower(email) = lower(?) AND id <> ?")
-      .get(email, id) as { id?: string } | undefined;
+      .prepare("SELECT id FROM users WHERE email_lookup = ? AND id <> ?")
+      .get(createSensitiveLookup(email), id) as { id?: string } | undefined;
     if (duplicate?.id) {
       throw new ConflictException("邮箱已存在");
     }
@@ -420,8 +424,19 @@ export class UsersService {
     const remark = input.remark?.trim() ?? current.remark;
     const before = toAuthUser(current);
     this.database.connection
-      .prepare("UPDATE users SET display_name = ?, email = ?, remark = ?, avatar = ? WHERE id = ?")
-      .run(displayName, email, remark, avatar, id);
+      .prepare(
+        `UPDATE users
+         SET display_name = ?, email = ?, email_lookup = ?, remark = ?, avatar = ?
+         WHERE id = ?`,
+      )
+      .run(
+        encryptSensitive(displayName),
+        encryptSensitive(email),
+        createSensitiveLookup(email),
+        encryptSensitive(remark),
+        encryptSensitive(avatar),
+        id,
+      );
 
     const updated = this.findAuthenticatedUser(id)!.user;
     this.database.addActivity({
@@ -699,7 +714,7 @@ export class UsersService {
          SET last_active_at = ?, last_login_ip = ?, failed_login_count = 0, locked_until = NULL
          WHERE id = ?`,
       )
-      .run(now, context?.ipAddress ?? "", id);
+      .run(now, encryptSensitive(context?.ipAddress ?? ""), id);
     const row = this.findRowById(id);
     if (!row) {
       return;
@@ -857,13 +872,15 @@ export class UsersService {
     const email = input.email.trim().toLowerCase();
     const username = input.username.trim();
     const existing = this.database.connection
-      .prepare("SELECT username, email FROM users WHERE username = ? OR email = ?")
-      .get(username, email) as { username?: string; email?: string } | undefined;
+      .prepare("SELECT username, email_lookup FROM users WHERE username = ? OR email_lookup = ?")
+      .get(username, createSensitiveLookup(email)) as
+      | { username?: string; email_lookup?: string }
+      | undefined;
 
     if (existing?.username) {
       throw new ConflictException("用户名已存在");
     }
-    if (existing?.email) {
+    if (existing?.email_lookup) {
       throw new ConflictException("邮箱已存在");
     }
     if (input.privacyNoticeAccepted === false) {
@@ -885,22 +902,23 @@ export class UsersService {
     this.database.connection
       .prepare(
         `INSERT INTO users
-          (id, username, display_name, email, password_hash, role, status, avatar, remark,
+          (id, username, display_name, email, email_lookup, password_hash, role, status, avatar, remark,
            data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
            session_version, password_changed_at, privacy_notice_accepted_at, last_login_ip,
            created_at, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         username,
-        displayName,
-        email,
+        encryptSensitive(displayName),
+        encryptSensitive(email),
+        createSensitiveLookup(email),
         hashPassword(input.password),
         input.role,
         input.status,
         "",
-        input.remark?.trim() ?? "",
+        encryptSensitive(input.remark?.trim() ?? ""),
         defaultDataScopeForRole(input.role),
         "[]",
         0,
@@ -946,15 +964,26 @@ export class UsersService {
     const row = this.database.connection
       .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`)
       .get(id) as unknown as UserRow | undefined;
-    return row ?? null;
+    return row ? decryptUserRow(row) : null;
   }
 
   private findRowByUsername(username: string): UserRow | null {
     const row = this.database.connection
       .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE username = ?`)
       .get(username.trim()) as unknown as UserRow | undefined;
-    return row ?? null;
+    return row ? decryptUserRow(row) : null;
   }
+}
+
+function decryptUserRow(row: UserRow): UserRow {
+  return {
+    ...row,
+    avatar: decryptSensitive(row.avatar),
+    display_name: decryptSensitive(row.display_name),
+    email: decryptSensitive(row.email),
+    last_login_ip: decryptSensitive(row.last_login_ip),
+    remark: decryptSensitive(row.remark),
+  };
 }
 
 function toPublicRecord(row: UserRow): UserRecord {

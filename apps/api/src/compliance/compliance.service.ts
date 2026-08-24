@@ -203,7 +203,7 @@ export class ComplianceService {
         "数据保密性",
         "密码和敏感认证数据不得明文保存",
         true,
-        "密码使用 scrypt 哈希；MFA 密钥与备份使用 AES-256-GCM；接口不返回密码和密钥明文。",
+        "密码使用 scrypt 哈希；用户邮箱、显示名、备注、头像、登录 IP 以及审计敏感字段使用 AES-256-GCM 字段加密，邮箱通过 HMAC 索引检索；MFA 密钥、SMTP 密码和备份文件也不以明文保存。",
       ),
       this.check(
         15,

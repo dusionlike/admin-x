@@ -72,6 +72,7 @@ await writeFile(
     "Environment variables:",
     "  PORT=3000",
     "  JWT_SECRET=replace-this-in-production",
+    "  DATA_ENCRYPTION_KEY=replace-with-a-dedicated-data-encryption-key",
     "  FRONTEND_ORIGIN=http://localhost:3000",
     "  SECURE_TRANSPORT_REQUIRED=true",
     "  HA_ENABLED=false",

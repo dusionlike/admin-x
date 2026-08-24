@@ -17,6 +17,15 @@ import type {
   VulnerabilityScanRecord,
 } from "@admin-x/shared";
 
+import {
+  assertDataEncryptionKey,
+  createSensitiveLookup,
+  decryptSensitive,
+  decryptSensitiveOptional,
+  encryptSensitive,
+  isSensitiveCiphertext,
+} from "../security/data-protection.js";
+
 export interface AuditContext {
   ipAddress?: string;
   requestId?: string;
@@ -75,6 +84,7 @@ const SCHEMA = `
     username TEXT NOT NULL COLLATE NOCASE UNIQUE,
     display_name TEXT NOT NULL,
     email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    email_lookup TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('system-admin', 'security-admin', 'audit-admin', 'business-admin', 'operator', 'readonly')),
     status TEXT NOT NULL CHECK (status IN ('active', 'invited', 'suspended')),
@@ -226,6 +236,7 @@ export class DatabaseService implements OnModuleDestroy {
   readonly databasePath: string;
 
   constructor(@Inject(DATABASE_PATH) databasePath = resolveDatabasePath()) {
+    assertDataEncryptionKey();
     this.databasePath = databasePath;
     if (databasePath !== ":memory:") {
       mkdirSync(dirname(databasePath), { recursive: true });
@@ -243,6 +254,7 @@ export class DatabaseService implements OnModuleDestroy {
     for (const [name, definition] of [
       ["avatar", "TEXT NOT NULL DEFAULT ''"],
       ["remark", "TEXT NOT NULL DEFAULT ''"],
+      ["email_lookup", "TEXT NOT NULL DEFAULT ''"],
       ["data_scope", "TEXT NOT NULL DEFAULT 'assigned'"],
       ["data_scope_ids", "TEXT NOT NULL DEFAULT '[]'"],
       ["mfa_enabled", "INTEGER NOT NULL DEFAULT 0"],
@@ -294,6 +306,12 @@ export class DatabaseService implements OnModuleDestroy {
         // The column already exists on a current database.
       }
     }
+    // Encrypt legacy values before creating the append-only audit triggers;
+    // the migration must be allowed to update existing audit rows once.
+    this.connection.exec(
+      "DROP TRIGGER IF EXISTS activity_logs_no_update; DROP TRIGGER IF EXISTS activity_logs_no_delete;",
+    );
+    this.migrateSensitiveStorage();
     this.connection.exec(
       `CREATE INDEX IF NOT EXISTS idx_activity_logs_actor_id ON activity_logs(actor_id);
        CREATE INDEX IF NOT EXISTS idx_activity_logs_result ON activity_logs(result);
@@ -317,6 +335,75 @@ export class DatabaseService implements OnModuleDestroy {
        UPDATE users SET privacy_notice_accepted_at = created_at WHERE privacy_notice_accepted_at = '';
        UPDATE security_policy SET lockout_minutes = 30 WHERE lockout_minutes < 30;`,
     );
+    this.connection.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lookup ON users(email_lookup)",
+    );
+  }
+
+  private migrateSensitiveStorage(): void {
+    this.connection.exec("BEGIN IMMEDIATE;");
+    try {
+      const users = this.connection
+        .prepare(
+          `SELECT id, display_name, email, email_lookup, avatar, remark, last_login_ip
+           FROM users`,
+        )
+        .all() as SqlRow[];
+      const updateUser = this.connection.prepare(
+        `UPDATE users
+         SET display_name = ?, email = ?, email_lookup = ?, avatar = ?, remark = ?, last_login_ip = ?
+         WHERE id = ?`,
+      );
+      for (const row of users) {
+        const email = decryptSensitive(row.email);
+        updateUser.run(
+          encryptStoredValue(row.display_name),
+          encryptStoredValue(row.email),
+          createSensitiveLookup(email.trim().toLowerCase()),
+          encryptStoredValue(row.avatar),
+          encryptStoredValue(row.remark),
+          encryptStoredValue(row.last_login_ip),
+          String(row.id),
+        );
+      }
+
+      const auditRows = this.connection
+        .prepare(
+          `SELECT id, actor_name, actor_username, title, description, target_id,
+                  before_json, after_json, ip_address, user_agent, request_id
+           FROM activity_logs`,
+        )
+        .all() as SqlRow[];
+      const updateAudit = this.connection.prepare(
+        `UPDATE activity_logs
+         SET actor_name = ?, actor_username = ?, title = ?, description = ?, target_id = ?,
+             before_json = ?, after_json = ?, ip_address = ?, user_agent = ?, request_id = ?
+         WHERE id = ?`,
+      );
+      for (const row of auditRows) {
+        updateAudit.run(
+          encryptStoredValue(row.actor_name),
+          encryptStoredNullableValue(row.actor_username),
+          encryptStoredValue(row.title),
+          encryptStoredValue(row.description),
+          encryptStoredNullableValue(row.target_id),
+          encryptStoredNullableValue(row.before_json),
+          encryptStoredNullableValue(row.after_json),
+          encryptStoredNullableValue(row.ip_address),
+          encryptStoredNullableValue(row.user_agent),
+          encryptStoredNullableValue(row.request_id),
+          String(row.id),
+        );
+      }
+      this.connection.exec("COMMIT;");
+    } catch (error) {
+      try {
+        this.connection.exec("ROLLBACK;");
+      } catch {
+        // Preserve the original migration error.
+      }
+      throw error;
+    }
   }
 
   private migrateLegacyUserSchema(): void {
@@ -343,6 +430,7 @@ export class DatabaseService implements OnModuleDestroy {
           username TEXT NOT NULL COLLATE NOCASE UNIQUE,
           display_name TEXT NOT NULL,
           email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          email_lookup TEXT NOT NULL DEFAULT '',
           password_hash TEXT NOT NULL,
           role TEXT NOT NULL CHECK (role IN ('system-admin', 'security-admin', 'audit-admin', 'business-admin', 'operator', 'readonly')),
           status TEXT NOT NULL CHECK (status IN ('active', 'invited', 'suspended')),
@@ -456,21 +544,21 @@ export class DatabaseService implements OnModuleDestroy {
       .run(
         randomUUID(),
         input.actor?.id ?? null,
-        input.actor?.displayName ?? input.actorName ?? "系统",
-        input.actor?.username ?? input.actorUsername ?? null,
+        encryptStoredValue(input.actor?.displayName ?? input.actorName ?? "系统"),
+        encryptStoredNullableValue(input.actor?.username ?? input.actorUsername),
         input.actor?.role ?? null,
         input.action ?? input.type,
         input.resource ?? "system",
-        input.targetId ?? null,
-        input.title,
-        input.description,
+        encryptStoredNullableValue(input.targetId),
+        encryptStoredValue(input.title),
+        encryptStoredValue(input.description),
         input.type,
         input.result ?? "success",
-        beforeJson,
-        afterJson,
-        input.context?.ipAddress ?? null,
-        input.context?.userAgent ?? null,
-        input.context?.requestId ?? null,
+        encryptStoredNullableValue(beforeJson),
+        encryptStoredNullableValue(afterJson),
+        encryptStoredNullableValue(input.context?.ipAddress),
+        encryptStoredNullableValue(input.context?.userAgent),
+        encryptStoredNullableValue(input.context?.requestId),
         prevHash,
         integrityHash,
         createdAt,
@@ -497,9 +585,9 @@ export class DatabaseService implements OnModuleDestroy {
 
     return rows.map((row) => ({
       createdAt: String(row.created_at),
-      description: String(row.description),
+      description: decryptSensitive(row.description),
       id: String(row.id),
-      title: String(row.title),
+      title: decryptSensitive(row.title),
       type: row.type as ActivityItem["type"],
     }));
   }
@@ -510,33 +598,39 @@ export class DatabaseService implements OnModuleDestroy {
     limit: number,
     offset: number,
   ): AuditRecord[] {
-    const normalizedKeyword = keyword.trim().toLowerCase();
-    const conditions: string[] = [];
-    const parameters: string[] = [];
-    if (normalizedKeyword) {
-      conditions.push(
-        "(lower(action) LIKE ? OR lower(actor_name) LIKE ? OR lower(actor_username) LIKE ? OR lower(title) LIKE ? OR lower(description) LIKE ? OR lower(resource) LIKE ?)",
-      );
-      parameters.push(...Array.from({ length: 6 }, () => `%${normalizedKeyword}%`));
-    }
-    if (result !== "all") {
-      conditions.push("result = ?");
-      parameters.push(result);
-    }
-    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const records = this.filterAuditRecords(keyword, result);
+    return records.slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit));
+  }
+
+  private filterAuditRecords(
+    keyword: string,
+    result: AuditRecord["result"] | "all",
+  ): AuditRecord[] {
     const rows = this.connection
       .prepare(
         `SELECT id, actor_id, actor_name, actor_username, actor_role, action, resource, target_id,
                 title, description, type, result, before_json, after_json, ip_address, user_agent,
                 request_id, integrity_hash, created_at
          FROM activity_logs
-         ${whereClause}
-         ORDER BY created_at DESC
-         LIMIT ? OFFSET ?`,
+         ${result === "all" ? "" : "WHERE result = ?"}
+         ORDER BY created_at DESC`,
       )
-      .all(...parameters, limit, offset) as SqlRow[];
-
-    return rows.map((audit) => toAuditRecord(audit));
+      .all(...(result === "all" ? [] : [result])) as SqlRow[];
+    const records = rows.map((audit) => toAuditRecord(audit));
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    if (!normalizedKeyword) {
+      return records;
+    }
+    return records.filter((record) =>
+      [
+        record.action,
+        record.actorName,
+        record.actorUsername,
+        record.title,
+        record.description,
+        record.resource,
+      ].some((value) => value?.toLowerCase().includes(normalizedKeyword)),
+    );
   }
 
   listAuditRecordsForActor(actorId: string, limit = 1000): AuditRecord[] {
@@ -554,24 +648,7 @@ export class DatabaseService implements OnModuleDestroy {
   }
 
   countAuditRecords(keyword: string, result: AuditRecord["result"] | "all"): number {
-    const normalizedKeyword = keyword.trim().toLowerCase();
-    const conditions: string[] = [];
-    const parameters: string[] = [];
-    if (normalizedKeyword) {
-      conditions.push(
-        "(lower(action) LIKE ? OR lower(actor_name) LIKE ? OR lower(actor_username) LIKE ? OR lower(title) LIKE ? OR lower(description) LIKE ? OR lower(resource) LIKE ?)",
-      );
-      parameters.push(...Array.from({ length: 6 }, () => `%${normalizedKeyword}%`));
-    }
-    if (result !== "all") {
-      conditions.push("result = ?");
-      parameters.push(result);
-    }
-    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const row = this.connection
-      .prepare(`SELECT COUNT(*) AS count FROM activity_logs ${whereClause}`)
-      .get(...parameters) as SqlRow | undefined;
-    return toNumber(row?.count);
+    return this.filterAuditRecords(keyword, result).length;
   }
 
   createBackupRecord(input: {
@@ -995,6 +1072,24 @@ function toNumber(value: unknown): number {
   return typeof value === "bigint" ? Number(value) : Number(value ?? 0);
 }
 
+function encryptStoredValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") {
+    return "";
+  }
+  const text = String(value);
+  return isSensitiveCiphertext(text) ? text : encryptSensitive(text);
+}
+
+function encryptStoredNullableValue(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (value === "") {
+    return "";
+  }
+  return encryptStoredValue(value);
+}
+
 function serializeAuditValue(value: unknown): string | null {
   if (value === undefined) {
     return null;
@@ -1022,26 +1117,36 @@ function parseStringArray(value: unknown): string[] {
 
 function toAuditRecord(row: SqlRow): AuditRecord {
   const result = row.result === "failure" || row.result === "blocked" ? row.result : "success";
+  const actorName = decryptSensitive(row.actor_name || "系统");
+  const actorUsername = decryptSensitiveOptional(row.actor_username);
+  const afterJson = decryptSensitiveOptional(row.after_json);
+  const beforeJson = decryptSensitiveOptional(row.before_json);
+  const description = decryptSensitive(row.description);
+  const ipAddress = decryptSensitiveOptional(row.ip_address);
+  const requestId = decryptSensitiveOptional(row.request_id);
+  const targetId = decryptSensitiveOptional(row.target_id);
+  const title = decryptSensitive(row.title);
+  const userAgent = decryptSensitiveOptional(row.user_agent);
   return {
     action: String(row.action),
     actorId: typeof row.actor_id === "string" ? row.actor_id : undefined,
-    actorName: String(row.actor_name || "系统"),
+    actorName,
     actorRole: typeof row.actor_role === "string" ? (row.actor_role as UserRole) : undefined,
-    actorUsername: typeof row.actor_username === "string" ? row.actor_username : undefined,
-    after: parseJson(row.after_json),
-    before: parseJson(row.before_json),
+    actorUsername,
+    after: parseJson(afterJson),
+    before: parseJson(beforeJson),
     createdAt: String(row.created_at),
-    description: String(row.description),
+    description,
     id: String(row.id),
     integrityHash: typeof row.integrity_hash === "string" ? row.integrity_hash : undefined,
-    ipAddress: typeof row.ip_address === "string" ? row.ip_address : undefined,
-    requestId: typeof row.request_id === "string" ? row.request_id : undefined,
+    ipAddress,
+    requestId,
     resource: String(row.resource),
     result,
-    targetId: typeof row.target_id === "string" ? row.target_id : undefined,
-    title: String(row.title),
+    targetId,
+    title,
     type: row.type as AuditRecord["type"],
-    userAgent: typeof row.user_agent === "string" ? row.user_agent : undefined,
+    userAgent,
   };
 }
 

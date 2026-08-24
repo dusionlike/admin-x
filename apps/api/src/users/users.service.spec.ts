@@ -26,6 +26,39 @@ test("persists and filters users in SQLite", () => {
   database.onModuleDestroy();
 });
 
+test("encrypts user personal fields at rest while preserving application search", () => {
+  const database = new DatabaseService(":memory:");
+  const service = new UsersService(database);
+  const admin = service.createAdmin({
+    displayName: "加密管理员",
+    email: "encrypted@example.com",
+    password: "OwnerPass123!",
+    username: "encrypted-admin",
+  });
+
+  const raw = database.connection
+    .prepare(
+      "SELECT display_name, email, email_lookup, remark, last_login_ip FROM users WHERE id = ?",
+    )
+    .get(admin.id) as {
+    display_name?: string;
+    email?: string;
+    email_lookup?: string;
+    last_login_ip?: string;
+    remark?: string;
+  };
+  expect(raw.display_name).toMatch(/^v1:/u);
+  expect(raw.email).toMatch(/^v1:/u);
+  expect(raw.email).not.toContain("encrypted@example.com");
+  expect(raw.email_lookup).toMatch(/^[a-f0-9]{64}$/u);
+  expect(raw.remark).toBe("");
+  expect(raw.last_login_ip).toBe("");
+  expect(
+    service.list({ keyword: "encrypted@example.com", page: 1, pageSize: 10 }).items[0]?.id,
+  ).toBe(admin.id);
+  database.onModuleDestroy();
+});
+
 test("creates and updates a user", () => {
   const database = new DatabaseService(":memory:");
   const service = new UsersService(database);
@@ -175,11 +208,30 @@ test("migrates the legacy business user schema without retaining plaintext passw
       new Date().toISOString(),
       "plaintext-should-be-removed",
     );
+  legacy
+    .prepare(
+      `INSERT INTO activity_logs (id, title, description, type, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "legacy-audit",
+      "历史账号登录",
+      "历史账号 192.168.1.10 登录成功",
+      "login",
+      new Date().toISOString(),
+    );
   legacy.close();
 
   const database = new DatabaseService(databasePath);
   const service = new UsersService(database);
   expect(service.get("legacy-user").role).toBe("system-admin");
+  const migratedAudit = database.connection
+    .prepare("SELECT description, ip_address FROM activity_logs WHERE id = ?")
+    .get("legacy-audit") as { description?: string; ip_address?: string };
+  expect(migratedAudit.description).toMatch(/^v1:/u);
+  expect(database.listAuditRecords("历史账号", "all", 10, 0)[0]?.description).toBe(
+    "历史账号 192.168.1.10 登录成功",
+  );
   const userSchema = database.connection
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
     .get() as { sql?: string };
@@ -322,9 +374,14 @@ test("stores audit context and prevents audit records from being changed or dele
     integrity_hash?: string;
     ip_address?: string;
   };
-  expect(row.ip_address).toBe("192.168.1.25");
-  expect(row.before_json).toContain("invited");
-  expect(row.after_json).toContain("active");
+  expect(row.ip_address).toMatch(/^v1:/u);
+  expect(row.ip_address).not.toContain("192.168.1.25");
+  expect(row.before_json).not.toContain("invited");
+  expect(row.after_json).not.toContain("active");
+  const audit = database.listAuditRecords("", "all", 10, 0)[0];
+  expect(audit?.ipAddress).toBe("192.168.1.25");
+  expect(audit?.before).toEqual({ status: "invited" });
+  expect(audit?.after).toEqual({ status: "active" });
   expect(row.integrity_hash).toHaveLength(64);
   expect(() => database.connection.exec("UPDATE activity_logs SET title = 'tampered'")).toThrow(
     "append-only",

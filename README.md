@@ -82,7 +82,7 @@ node server/main.mjs
 pnpm start
 ```
 
-默认端口是 `3000`。服务启动时会自动读取运行目录下的 `.env` 文件，也会读取部署包中 `server` 目录旁的 `.env`；已有的系统环境变量优先于 `.env`。可参考根目录的 `.env.example` 配置 `PORT`、`JWT_SECRET`、`FRONTEND_ORIGIN` 和 `DATABASE_PATH` 等变量。部署包默认把数据库写入 `.output/data/admin-x.sqlite`。浏览器访问同一个服务地址时，前端使用相对路径请求 `/api`，NestJS 会同时托管页面和 API；Vue Router 的页面刷新也会自动回退到 `index.html`。
+默认端口是 `3000`。服务启动时会自动读取运行目录下的 `.env` 文件，也会读取部署包中 `server` 目录旁的 `.env`；已有的系统环境变量优先于 `.env`。可参考根目录的 `.env.example` 配置 `PORT`、`JWT_SECRET`、独立的 `DATA_ENCRYPTION_KEY`、`FRONTEND_ORIGIN` 和 `DATABASE_PATH` 等变量。部署包默认把数据库写入 `.output/data/admin-x.sqlite`。浏览器访问同一个服务地址时，前端使用相对路径请求 `/api`，NestJS 会同时托管页面和 API；Vue Router 的页面刷新也会自动回退到 `index.html`。
 
 ## 常用命令
 
@@ -222,7 +222,7 @@ vp run ready
 
 这套代码提供的是后台应用层的 RBAC 基础，不能单独等同于“通过三级等保”。正式测评仍需结合部署环境落实多因素鉴别、传输与存储保护、日志留存与集中管控、备份恢复、制度和人员配备等要求。
 
-合规中心的“已满足”状态只代表应用层有可验证实现和运行证据；生产环境仍应配置 `SECURE_TRANSPORT_REQUIRED=true`、独立的 `BACKUP_ENCRYPTION_KEY`、异地 `BACKUP_REMOTE_PATH` 和 `HA_ENABLED=true`，并将漏洞扫描结果接入发布流水线。
+合规中心的“已满足”状态只代表应用层有可验证实现和运行证据；生产环境仍应配置 `SECURE_TRANSPORT_REQUIRED=true`、独立的 `DATA_ENCRYPTION_KEY` 和 `BACKUP_ENCRYPTION_KEY`、异地 `BACKUP_REMOTE_PATH` 和 `HA_ENABLED=true`，并将漏洞扫描结果接入发布流水线。
 
 前端开发服务器会将 `/api` 代理到 `http://localhost:3000`。一体化部署默认使用相对路径 `/api`，也可以在构建前通过 `VITE_API_BASE_URL` 指向独立 API 地址；服务端运行时通过 `PORT` 和 `FRONTEND_ORIGIN` 调整 NestJS 配置。
 

@@ -226,7 +226,7 @@ onMounted(() => {
               v-model="transport.smtpPassword"
               type="password"
               show-password
-              autocomplete="new-password"
+              autocomplete="off"
               :placeholder="settings.smtpPasswordSet ? '已配置，留空保持不变' : '请输入 SMTP 密码'"
             />
           </el-form-item>

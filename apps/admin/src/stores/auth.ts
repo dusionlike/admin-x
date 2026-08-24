@@ -55,18 +55,30 @@ export const useAuthStore = defineStore("auth", () => {
     localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
   }
 
+  function clearSession() {
+    clearReauthenticationToken();
+    token.value = "";
+    user.value = null;
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  }
+
   async function logout() {
     try {
       if (token.value) {
         await authApi.logout();
       }
     } finally {
-      clearReauthenticationToken();
-      token.value = "";
-      user.value = null;
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
+      clearSession();
     }
+  }
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("storage", (event) => {
+      if (event.key === TOKEN_KEY && !event.newValue) {
+        clearSession();
+      }
+    });
   }
 
   return {

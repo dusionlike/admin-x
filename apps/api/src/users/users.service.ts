@@ -46,6 +46,7 @@ import {
   decryptSensitive,
   encryptSensitive,
 } from "../security/data-protection.js";
+import { maskAuditRecords } from "../security/audit-redaction.js";
 
 interface UserRow {
   id: string;
@@ -254,6 +255,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(status, status, id);
+    this.database.revokeUserSessions(id);
     const updated = this.findRowById(id)!;
     const updatedUser = toPublicRecord(updated);
     const actorLabel = actor ? `${actor.displayName}（@${actor.username}）` : "系统";
@@ -284,6 +286,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(id);
+    this.database.revokeUserSessions(id);
     const updated = toPublicRecord(this.findRowById(id)!);
     this.database.addActivity({
       action: "user.unlock",
@@ -339,6 +342,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(role, defaultDataScopeForRole(role), id);
+    this.database.revokeUserSessions(id);
     const updated = this.findRowById(id)!;
     const updatedUser = toPublicRecord(updated);
     const bootstrap = actor.role === "system-admin" ? "（初始化授权）" : "";
@@ -386,6 +390,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(dataScope.type, JSON.stringify(dataScope.ids), id);
+    this.database.revokeUserSessions(id);
     const updatedUser = toPublicRecord(this.findRowById(id)!);
     this.database.addActivity({
       action: "data-scope.update",
@@ -502,6 +507,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(hashPassword(password), now, id);
+    this.database.revokeUserSessions(id);
     const auditActor = actor ? toAuditActor(actor) : toAuditActor(toAuthUser(user));
     const isResetByAdministrator = Boolean(actor && actor.id !== id);
     this.database.addActivity({
@@ -557,7 +563,7 @@ export class UsersService {
       throw new NotFoundException("用户不存在");
     }
     const user = toAuthUser(row);
-    const auditRecords = this.database.listAuditRecordsForActor(id);
+    const auditRecords = maskAuditRecords(this.database.listAuditRecordsForActor(id));
     const exportedAt = new Date().toISOString();
     this.database.addActivity({
       action: "privacy.export",
@@ -601,14 +607,15 @@ export class UsersService {
     this.database.addActivity({
       action: "privacy.erase",
       actor: toAuditActor(snapshot),
-      before: auditUser(snapshot),
+      before: { id: snapshot.id, action: "privacy.erase" },
       context,
-      description: `账号 @${snapshot.username} 已按个人信息主体请求注销，业务个人资料已清除`,
+      description: "个人账号已按个人信息主体请求注销，业务个人资料已清除",
       title: "注销个人账号",
       type: "update",
       resource: "privacy",
       targetId: id,
     });
+    this.database.secureEraseStorage();
     return null;
   }
 
@@ -649,6 +656,7 @@ export class UsersService {
       resource: "user",
       targetId: id,
     });
+    this.database.secureEraseStorage();
     return null;
   }
 
@@ -820,6 +828,7 @@ export class UsersService {
         "UPDATE users SET mfa_enabled = ?, session_version = session_version + 1 WHERE id = ?",
       )
       .run(enabled ? 1 : 0, id);
+    this.database.revokeUserSessions(id);
     this.database.addActivity({
       action: enabled ? "mfa.enable" : "mfa.disable",
       actor: toAuditActor(toAuthUser(row)),

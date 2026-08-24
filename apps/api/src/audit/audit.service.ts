@@ -5,6 +5,7 @@ import { createPageMeta, normalizePageQuery } from "@admin-x/shared";
 
 import type { AuditContext } from "../database/database.service.js";
 import { DatabaseService } from "../database/database.service.js";
+import { maskAuditRecords } from "../security/audit-redaction.js";
 
 @Injectable()
 export class AuditService {
@@ -20,14 +21,18 @@ export class AuditService {
     const result = query.result ?? "all";
     const total = this.database.countAuditRecords(page.keyword, result);
     return {
-      items: this.database.listAuditRecords(page.keyword, result, page.pageSize, offset),
+      items: maskAuditRecords(
+        this.database.listAuditRecords(page.keyword, result, page.pageSize, offset),
+      ),
       meta: createPageMeta(total, page.page, page.pageSize),
     };
   }
 
   export(query: AuditListQuery, actor: AuthUser, context?: AuditContext): string {
     const result = query.result ?? "all";
-    const records = this.database.listAuditRecords(query.keyword ?? "", result, 10_000, 0);
+    const records = maskAuditRecords(
+      this.database.listAuditRecords(query.keyword ?? "", result, 10_000, 0),
+    );
     this.database.addActivity({
       action: "audit.export",
       actor: {

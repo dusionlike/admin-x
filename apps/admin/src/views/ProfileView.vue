@@ -160,6 +160,7 @@ async function beginMfaSetup() {
   } catch (error: unknown) {
     ElMessage.error(getErrorMessage(error, "MFA 配置生成失败"));
   } finally {
+    mfaPassword.value = "";
     mfaLoading.value = false;
   }
 }
@@ -179,6 +180,7 @@ async function enableMfa() {
   } catch (error: unknown) {
     ElMessage.error(getErrorMessage(error, "MFA 启用失败"));
   } finally {
+    mfaCode.value = "";
     mfaEnabling.value = false;
   }
 }
@@ -314,6 +316,9 @@ async function savePassword() {
     await authStore.logout().catch(() => undefined);
     await router.push({ name: "login" });
   } finally {
+    passwordForm.currentPassword = "";
+    passwordForm.newPassword = "";
+    passwordForm.confirmPassword = "";
     passwordSaving.value = false;
   }
 }
@@ -454,7 +459,7 @@ onMounted(() => {
             v-model="mfaPassword"
             type="password"
             show-password
-            autocomplete="current-password"
+            autocomplete="off"
             placeholder="先验证当前密码"
             :disabled="Boolean(mfaSetup)"
           />
@@ -569,7 +574,7 @@ onMounted(() => {
             v-model="passwordForm.currentPassword"
             type="password"
             show-password
-            autocomplete="current-password"
+            autocomplete="off"
             placeholder="请输入当前登录密码"
           />
         </el-form-item>
@@ -578,7 +583,7 @@ onMounted(() => {
             v-model="passwordForm.newPassword"
             type="password"
             show-password
-            autocomplete="new-password"
+            autocomplete="off"
             placeholder="至少 8 位，需满足四类字符要求"
           />
         </el-form-item>
@@ -587,7 +592,7 @@ onMounted(() => {
             v-model="passwordForm.confirmPassword"
             type="password"
             show-password
-            autocomplete="new-password"
+            autocomplete="off"
             placeholder="请再次输入新密码"
           />
         </el-form-item>

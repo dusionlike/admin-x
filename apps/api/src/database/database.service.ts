@@ -25,6 +25,7 @@ import {
   encryptSensitive,
   isSensitiveCiphertext,
 } from "../security/data-protection.js";
+import { maskAuditText } from "../security/audit-redaction.js";
 
 export interface AuditContext {
   ipAddress?: string;
@@ -243,7 +244,9 @@ export class DatabaseService implements OnModuleDestroy {
     }
 
     this.connection = new DatabaseSync(databasePath);
-    this.connection.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
+    this.connection.exec(
+      "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA secure_delete = ON;",
+    );
     this.connection.exec(SCHEMA);
     this.migrateExistingDatabase();
   }
@@ -585,9 +588,9 @@ export class DatabaseService implements OnModuleDestroy {
 
     return rows.map((row) => ({
       createdAt: String(row.created_at),
-      description: decryptSensitive(row.description),
+      description: maskAuditText(decryptSensitive(row.description)),
       id: String(row.id),
-      title: decryptSensitive(row.title),
+      title: maskAuditText(decryptSensitive(row.title)),
       type: row.type as ActivityItem["type"],
     }));
   }
@@ -986,11 +989,10 @@ export class DatabaseService implements OnModuleDestroy {
     const now = new Date().toISOString();
     this.connection
       .prepare(
-        `UPDATE auth_sessions
-         SET revoked_at = ?
-         WHERE user_id = ? AND revoked_at IS NULL AND expires_at <= ?`,
+        `DELETE FROM auth_sessions
+         WHERE user_id = ? AND (revoked_at IS NOT NULL OR expires_at <= ?)`,
       )
-      .run(now, userId, now);
+      .run(userId, now);
     const sessions = this.connection
       .prepare(
         `SELECT id FROM auth_sessions
@@ -1001,8 +1003,8 @@ export class DatabaseService implements OnModuleDestroy {
     for (const session of sessions.slice(Math.max(0, limit - 1))) {
       if (session.id) {
         this.connection
-          .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE id = ?")
-          .run(now, session.id);
+          .prepare("DELETE FROM auth_sessions WHERE id = ? AND user_id = ?")
+          .run(session.id, userId);
       }
     }
     this.connection
@@ -1031,10 +1033,10 @@ export class DatabaseService implements OnModuleDestroy {
       if (idleSince) {
         this.connection
           .prepare(
-            `UPDATE auth_sessions SET revoked_at = ?
+            `DELETE FROM auth_sessions
              WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND last_seen_at <= ?`,
           )
-          .run(now, sessionId, userId, idleSince);
+          .run(sessionId, userId, idleSince);
       }
       return false;
     }
@@ -1045,9 +1047,13 @@ export class DatabaseService implements OnModuleDestroy {
   }
 
   revokeUserSessions(userId: string): void {
-    this.connection
-      .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
-      .run(new Date().toISOString(), userId);
+    this.connection.prepare("DELETE FROM auth_sessions WHERE user_id = ?").run(userId);
+  }
+
+  secureEraseStorage(): void {
+    this.connection.exec(
+      "PRAGMA secure_delete = ON; PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);",
+    );
   }
 
   isHealthy(): boolean {
@@ -1060,7 +1066,11 @@ export class DatabaseService implements OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
-    this.connection.close();
+    try {
+      this.connection.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    } finally {
+      this.connection.close();
+    }
   }
 }
 

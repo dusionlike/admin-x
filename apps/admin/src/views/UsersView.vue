@@ -432,6 +432,8 @@ async function handleResetPassword() {
   } catch (error: unknown) {
     ElMessage.error(getErrorMessage(error, "重置用户密码失败"));
   } finally {
+    resetPasswordForm.newPassword = "";
+    resetPasswordForm.confirmPassword = "";
     resetPasswordLoading.value = false;
   }
 }
@@ -619,6 +621,7 @@ void loadUsers();
             v-model="form.password"
             type="password"
             show-password
+            autocomplete="off"
             placeholder="至少 8 位，需满足四类字符要求"
           />
         </el-form-item>
@@ -720,7 +723,7 @@ void loadUsers();
             v-model="resetPasswordForm.newPassword"
             type="password"
             show-password
-            autocomplete="new-password"
+            autocomplete="off"
             placeholder="需满足账号对应的四类字符要求"
           />
         </el-form-item>
@@ -729,7 +732,7 @@ void loadUsers();
             v-model="resetPasswordForm.confirmPassword"
             type="password"
             show-password
-            autocomplete="new-password"
+            autocomplete="off"
             placeholder="请再次输入新密码"
           />
         </el-form-item>

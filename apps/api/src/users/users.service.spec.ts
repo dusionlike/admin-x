@@ -310,8 +310,23 @@ test("updates the current password only after verifying the old password", () =>
       newPassword: "NewPass123!!",
     }),
   ).toBeNull();
+  database.createSession(
+    admin.id,
+    "password-session",
+    new Date(Date.now() + 60_000).toISOString(),
+    1,
+  );
+  service.updateCurrentPassword(admin.id, {
+    currentPassword: "NewPass123!!",
+    newPassword: "NewPass456!!",
+  });
+  expect(
+    database.connection
+      .prepare("SELECT COUNT(*) AS count FROM auth_sessions WHERE user_id = ?")
+      .get(admin.id),
+  ).toEqual({ count: 0 });
   const credentials = service.findCredentials("password-admin");
-  expect(credentials && verifyPassword("NewPass123!!", credentials.passwordHash)).toBe(true);
+  expect(credentials && verifyPassword("NewPass456!!", credentials.passwordHash)).toBe(true);
   database.onModuleDestroy();
 });
 
@@ -344,6 +359,49 @@ test("reports password expiry and lets a system administrator reset a member pas
   expect(
     verifyPassword("ResetMember123!", service.findCredentials("expired-member")!.passwordHash),
   ).toBe(true);
+  database.onModuleDestroy();
+});
+
+test("securely clears deleted user storage and its server sessions", () => {
+  const database = new DatabaseService(":memory:");
+  const service = new UsersService(database);
+  const admin = service.createAdmin({
+    displayName: "清除管理员",
+    email: "erase-admin@admin-x.dev",
+    password: "EraseAdmin123!",
+    username: "erase-admin",
+  });
+  const member = service.create({
+    displayName: "待清除成员",
+    email: "erase-member@admin-x.dev",
+    password: "EraseMember123!",
+    role: "operator",
+    status: "active",
+    username: "erase-member",
+  });
+  const actor = service.findAuthenticatedUser(admin.id)?.user;
+  database.createSession(
+    member.id,
+    "erase-session",
+    new Date(Date.now() + 60_000).toISOString(),
+    1,
+  );
+
+  service.remove(member.id, actor);
+
+  expect(service.count()).toBe(1);
+  expect(
+    database.connection.prepare("SELECT id FROM users WHERE id = ?").get(member.id),
+  ).toBeUndefined();
+  expect(
+    database.connection
+      .prepare("SELECT COUNT(*) AS count FROM auth_sessions WHERE user_id = ?")
+      .get(member.id),
+  ).toEqual({ count: 0 });
+  const pragma = database.connection.prepare("PRAGMA secure_delete").get() as {
+    secure_delete?: number | bigint;
+  };
+  expect(Number(pragma.secure_delete)).toBe(1);
   database.onModuleDestroy();
 });
 

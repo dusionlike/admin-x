@@ -162,6 +162,16 @@ async function redirectToApp() {
   await router.push(redirect);
 }
 
+function clearLoginSecrets() {
+  form.password = "";
+  form.mfaCode = "";
+}
+
+function clearSetupSecrets() {
+  setupForm.password = "";
+  setupForm.confirmPassword = "";
+}
+
 async function handleLogin() {
   if (!formRef.value) {
     return;
@@ -179,6 +189,7 @@ async function handleLogin() {
 
   try {
     const result = await authStore.login(form);
+    clearLoginSecrets();
     await redirectToApp();
     ElMessage.success("欢迎回来，已进入 Admin X 管理后台");
     if (result.passwordStatus?.expiringSoon && result.passwordStatus.daysRemaining) {
@@ -192,6 +203,7 @@ async function handleLogin() {
       expiredPasswordVisible.value = true;
       return;
     }
+    clearLoginSecrets();
     ElMessage.error(message);
   }
 }
@@ -261,6 +273,7 @@ async function handleSetup() {
       username: setupForm.username,
     });
     authStore.setSession(result);
+    clearSetupSecrets();
     await redirectToApp();
     ElMessage.success("首位管理员创建成功，已进入 Admin X 管理后台");
   } catch (error: unknown) {
@@ -366,6 +379,7 @@ onMounted(() => {
               size="large"
               type="password"
               show-password
+              autocomplete="off"
               placeholder="至少 12 位，需满足复杂度要求"
             >
               <template #prefix
@@ -382,6 +396,7 @@ onMounted(() => {
               size="large"
               type="password"
               show-password
+              autocomplete="off"
               placeholder="再次输入密码"
             >
               <template #prefix
@@ -435,7 +450,7 @@ onMounted(() => {
               size="large"
               type="password"
               show-password
-              autocomplete="current-password"
+              autocomplete="off"
               placeholder="请输入密码"
             >
               <template #prefix
@@ -512,7 +527,7 @@ onMounted(() => {
                 v-model="expiredPasswordForm.newPassword"
                 type="password"
                 show-password
-                autocomplete="new-password"
+                autocomplete="off"
                 placeholder="至少 8 位，需满足四类字符要求"
               />
             </el-form-item>
@@ -521,7 +536,7 @@ onMounted(() => {
                 v-model="expiredPasswordForm.confirmPassword"
                 type="password"
                 show-password
-                autocomplete="new-password"
+                autocomplete="off"
                 placeholder="请再次输入新密码"
               />
             </el-form-item>

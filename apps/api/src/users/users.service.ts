@@ -17,6 +17,7 @@ import type {
   PageResult,
   PersonalDataExport,
   PasswordStatus,
+  PrivacyConsentRequest,
   PrivacyEraseRequest,
   ResetUserPasswordRequest,
   SetupAdminRequest,
@@ -35,6 +36,8 @@ import {
   isAdministratorRole,
   PASSWORD_EXPIRY_WARNING_DAYS,
   normalizePageQuery,
+  PRIVACY_NOTICE_SUMMARY,
+  PRIVACY_NOTICE_VERSION,
 } from "@admin-x/shared";
 
 import { hashPassword, verifyPassword } from "../auth/password.js";
@@ -47,6 +50,7 @@ import {
   encryptSensitive,
 } from "../security/data-protection.js";
 import { maskAuditRecords } from "../security/audit-redaction.js";
+import { maskPersonalEmail } from "../privacy/privacy-policy.js";
 
 interface UserRow {
   id: string;
@@ -67,6 +71,9 @@ interface UserRow {
   session_version: number;
   password_changed_at: string;
   privacy_notice_accepted_at: string;
+  privacy_notice_version: string;
+  privacy_notice_summary: string;
+  privacy_notice_ip: string;
   last_login_ip: string;
   created_at: string;
   last_active_at: string | null;
@@ -92,14 +99,15 @@ export interface LoginCredentials {
 const USER_COLUMNS = `
   id, username, display_name, email, password_hash, role, status, avatar, remark,
   data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
-  session_version, password_changed_at, privacy_notice_accepted_at, last_login_ip,
+  session_version, password_changed_at, privacy_notice_accepted_at, privacy_notice_version,
+  privacy_notice_summary, privacy_notice_ip, last_login_ip,
   created_at, last_active_at`;
 
 @Injectable()
 export class UsersService {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
 
-  list(query: UserListQuery): PageResult<UserRecord> {
+  list(query: UserListQuery, actor?: AuthUser, context?: AuditContext): PageResult<UserRecord> {
     const normalized = normalizePageQuery(query);
     const conditions: string[] = [];
     const parameters: string[] = [];
@@ -129,12 +137,29 @@ export class UsersService {
       : rows;
     const start = (normalized.page - 1) * normalized.pageSize;
 
-    return {
+    const result = {
       items: filteredRows
         .slice(start, start + normalized.pageSize)
-        .map((row) => toPublicRecord(row)),
+        .map((row) => toPublicRecord(row, actor)),
       meta: createPageMeta(filteredRows.length, normalized.page, normalized.pageSize),
     };
+    if (actor) {
+      this.database.addActivity({
+        action: "privacy.access",
+        actor: toAuditActor(actor),
+        after: {
+          fields: ["登录用户名", "显示名称", "邮箱（按角色脱敏）", "岗位角色", "账号状态"],
+          returnedCount: result.items.length,
+          resource: "user-directory",
+        },
+        context,
+        description: `${actor.displayName}（@${actor.username}）访问了成员目录，个人信息按岗位权限展示`,
+        title: "访问个人信息目录",
+        type: "system",
+        resource: "privacy",
+      });
+    }
+    return result;
   }
 
   create(input: CreateUserRequest, actor?: AuthUser, context?: AuditContext): UserRecord {
@@ -150,16 +175,19 @@ export class UsersService {
       );
     }
 
-    const user = this.insertUser({
-      displayName: input.displayName,
-      email: input.email,
-      password: input.password,
-      privacyNoticeAccepted: input.privacyNoticeAccepted,
-      remark: input.remark,
-      role: input.role,
-      status: bootstrapSecurityAdmin ? "active" : (input.status ?? "invited"),
-      username: input.username,
-    });
+    const user = this.insertUser(
+      {
+        displayName: input.displayName,
+        email: input.email,
+        password: input.password,
+        privacyNoticeAccepted: input.privacyNoticeAccepted,
+        remark: input.remark,
+        role: input.role,
+        status: bootstrapSecurityAdmin ? "active" : (input.status ?? "invited"),
+        username: input.username,
+      },
+      context,
+    );
     this.database.addActivity({
       action: "user.create",
       actor: actor ? toAuditActor(actor) : undefined,
@@ -181,15 +209,18 @@ export class UsersService {
         throw new ConflictException("系统已完成初始化，不能重复创建管理员");
       }
 
-      const user = this.insertUser({
-        displayName: input.displayName,
-        email: input.email,
-        password: input.password,
-        privacyNoticeAccepted: input.privacyNoticeAccepted,
-        role: "system-admin",
-        status: "active",
-        username: input.username,
-      });
+      const user = this.insertUser(
+        {
+          displayName: input.displayName,
+          email: input.email,
+          password: input.password,
+          privacyNoticeAccepted: input.privacyNoticeAccepted,
+          role: "system-admin",
+          status: "active",
+          username: input.username,
+        },
+        context,
+      );
       this.database.addActivity({
         after: auditUser(user),
         context,
@@ -557,6 +588,44 @@ export class UsersService {
     };
   }
 
+  acceptPrivacyNotice(id: string, input: PrivacyConsentRequest, context?: AuditContext): AuthUser {
+    const row = this.findRowById(id);
+    if (!row) {
+      throw new NotFoundException("用户不存在");
+    }
+    if (input.accepted !== true) {
+      throw new BadRequestException("必须先阅读并同意个人信息保护告知");
+    }
+    const acceptedAt = new Date().toISOString();
+    this.database.connection
+      .prepare(
+        `UPDATE users
+         SET privacy_notice_accepted_at = ?, privacy_notice_version = ?,
+             privacy_notice_summary = ?, privacy_notice_ip = ?
+         WHERE id = ?`,
+      )
+      .run(
+        acceptedAt,
+        PRIVACY_NOTICE_VERSION,
+        PRIVACY_NOTICE_SUMMARY,
+        context?.ipAddress ? encryptSensitive(context.ipAddress) : "",
+        id,
+      );
+    const user = this.findAuthenticatedUser(id)!.user;
+    this.database.addActivity({
+      action: "privacy.notice.accept",
+      actor: toAuditActor(user),
+      after: { acceptedAt, version: PRIVACY_NOTICE_VERSION },
+      context,
+      description: `${user.displayName}（@${user.username}）确认了个人信息保护告知 ${PRIVACY_NOTICE_VERSION}`,
+      title: "确认个人信息保护告知",
+      type: "system",
+      resource: "privacy",
+      targetId: id,
+    });
+    return user;
+  }
+
   exportPersonalData(id: string, context?: AuditContext): PersonalDataExport {
     const row = this.findRowById(id);
     if (!row) {
@@ -578,6 +647,11 @@ export class UsersService {
     return {
       auditRecords,
       exportedAt,
+      privacyNotice: {
+        acceptedAt: row.privacy_notice_accepted_at,
+        summary: row.privacy_notice_summary,
+        version: row.privacy_notice_version,
+      },
       user,
     };
   }
@@ -867,16 +941,19 @@ export class UsersService {
     });
   }
 
-  private insertUser(input: {
-    displayName: string;
-    email: string;
-    password: string;
-    privacyNoticeAccepted?: boolean;
-    remark?: string;
-    role: UserRole;
-    status: UserStatus;
-    username: string;
-  }): UserRecord {
+  private insertUser(
+    input: {
+      displayName: string;
+      email: string;
+      password: string;
+      privacyNoticeAccepted: boolean;
+      remark?: string;
+      role: UserRole;
+      status: UserStatus;
+      username: string;
+    },
+    context?: AuditContext,
+  ): UserRecord {
     const displayName = input.displayName.trim();
     const email = input.email.trim().toLowerCase();
     const username = input.username.trim();
@@ -892,7 +969,7 @@ export class UsersService {
     if (existing?.email_lookup) {
       throw new ConflictException("邮箱已存在");
     }
-    if (input.privacyNoticeAccepted === false) {
+    if (input.privacyNoticeAccepted !== true) {
       throw new BadRequestException("必须先阅读并同意个人信息保护告知");
     }
 
@@ -913,9 +990,9 @@ export class UsersService {
         `INSERT INTO users
           (id, username, display_name, email, email_lookup, password_hash, role, status, avatar, remark,
            data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
-           session_version, password_changed_at, privacy_notice_accepted_at, last_login_ip,
-           created_at, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           session_version, password_changed_at, privacy_notice_accepted_at, privacy_notice_version,
+           privacy_notice_summary, privacy_notice_ip, last_login_ip, created_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -937,6 +1014,9 @@ export class UsersService {
         0,
         now,
         now,
+        PRIVACY_NOTICE_VERSION,
+        PRIVACY_NOTICE_SUMMARY,
+        context?.ipAddress ? encryptSensitive(context.ipAddress) : "",
         "",
         now,
         null,
@@ -991,17 +1071,18 @@ function decryptUserRow(row: UserRow): UserRow {
     display_name: decryptSensitive(row.display_name),
     email: decryptSensitive(row.email),
     last_login_ip: decryptSensitive(row.last_login_ip),
+    privacy_notice_ip: decryptSensitive(row.privacy_notice_ip),
     remark: decryptSensitive(row.remark),
   };
 }
 
-function toPublicRecord(row: UserRow): UserRecord {
+function toPublicRecord(row: UserRow, actor?: AuthUser): UserRecord {
   return {
     avatar: row.avatar || undefined,
     createdAt: row.created_at.slice(0, 10),
     dataScope: parseDataScope(row.data_scope, row.data_scope_ids, row.role),
     displayName: row.display_name,
-    email: row.email,
+    email: canViewFullEmail(row, actor) ? row.email : maskPersonalEmail(row.email),
     id: row.id,
     lastActiveAt: formatLastActiveAt(row.last_active_at),
     mfaEnabled: Boolean(row.mfa_enabled),
@@ -1020,6 +1101,7 @@ function toAuthUser(row: UserRow): AuthUser {
     email: row.email,
     id: row.id,
     mfaEnabled: Boolean(row.mfa_enabled),
+    privacyNoticeVersion: row.privacy_notice_version || undefined,
     remark: row.remark,
     role: row.role,
     username: row.username,
@@ -1028,6 +1110,10 @@ function toAuthUser(row: UserRow): AuthUser {
     user.lastLoginAt = row.last_active_at;
   }
   return user;
+}
+
+function canViewFullEmail(row: UserRow, actor?: AuthUser): boolean {
+  return !actor || actor.role === "system-admin" || actor.id === row.id;
 }
 
 function auditUser(user: UserRecord | AuthUser): Record<string, unknown> {

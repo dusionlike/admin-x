@@ -100,6 +100,9 @@ const SCHEMA = `
     session_version INTEGER NOT NULL DEFAULT 0,
     password_changed_at TEXT NOT NULL DEFAULT '',
     privacy_notice_accepted_at TEXT NOT NULL DEFAULT '',
+    privacy_notice_version TEXT NOT NULL DEFAULT '',
+    privacy_notice_summary TEXT NOT NULL DEFAULT '',
+    privacy_notice_ip TEXT NOT NULL DEFAULT '',
     last_login_ip TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     last_active_at TEXT
@@ -267,6 +270,9 @@ export class DatabaseService implements OnModuleDestroy {
       ["session_version", "INTEGER NOT NULL DEFAULT 0"],
       ["password_changed_at", "TEXT NOT NULL DEFAULT ''"],
       ["privacy_notice_accepted_at", "TEXT NOT NULL DEFAULT ''"],
+      ["privacy_notice_version", "TEXT NOT NULL DEFAULT ''"],
+      ["privacy_notice_summary", "TEXT NOT NULL DEFAULT ''"],
+      ["privacy_notice_ip", "TEXT NOT NULL DEFAULT ''"],
       ["last_login_ip", "TEXT NOT NULL DEFAULT ''"],
     ] as const) {
       try {
@@ -335,7 +341,10 @@ export class DatabaseService implements OnModuleDestroy {
        WHERE role IN ('system-admin', 'security-admin', 'audit-admin', 'business-admin')
          AND data_scope = 'assigned';
        UPDATE users SET password_changed_at = created_at WHERE password_changed_at = '';
-       UPDATE users SET privacy_notice_accepted_at = created_at WHERE privacy_notice_accepted_at = '';
+       UPDATE users
+       SET privacy_notice_accepted_at = '', privacy_notice_version = '',
+           privacy_notice_summary = '', privacy_notice_ip = ''
+       WHERE privacy_notice_version = '' OR privacy_notice_summary = '';
        UPDATE security_policy SET lockout_minutes = 30 WHERE lockout_minutes < 30;`,
     );
     this.connection.exec(
@@ -348,13 +357,15 @@ export class DatabaseService implements OnModuleDestroy {
     try {
       const users = this.connection
         .prepare(
-          `SELECT id, display_name, email, email_lookup, avatar, remark, last_login_ip
+          `SELECT id, display_name, email, email_lookup, avatar, remark, privacy_notice_ip,
+                  last_login_ip
            FROM users`,
         )
         .all() as SqlRow[];
       const updateUser = this.connection.prepare(
         `UPDATE users
-         SET display_name = ?, email = ?, email_lookup = ?, avatar = ?, remark = ?, last_login_ip = ?
+         SET display_name = ?, email = ?, email_lookup = ?, avatar = ?, remark = ?,
+             privacy_notice_ip = ?, last_login_ip = ?
          WHERE id = ?`,
       );
       for (const row of users) {
@@ -365,6 +376,7 @@ export class DatabaseService implements OnModuleDestroy {
           createSensitiveLookup(email.trim().toLowerCase()),
           encryptStoredValue(row.avatar),
           encryptStoredValue(row.remark),
+          encryptStoredValue(row.privacy_notice_ip),
           encryptStoredValue(row.last_login_ip),
           String(row.id),
         );
@@ -448,6 +460,9 @@ export class DatabaseService implements OnModuleDestroy {
           session_version INTEGER NOT NULL DEFAULT 0,
           password_changed_at TEXT NOT NULL DEFAULT '',
           privacy_notice_accepted_at TEXT NOT NULL DEFAULT '',
+          privacy_notice_version TEXT NOT NULL DEFAULT '',
+          privacy_notice_summary TEXT NOT NULL DEFAULT '',
+          privacy_notice_ip TEXT NOT NULL DEFAULT '',
           last_login_ip TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL,
           last_active_at TEXT
@@ -455,11 +470,11 @@ export class DatabaseService implements OnModuleDestroy {
       `);
       const insert = this.connection.prepare(
         `INSERT INTO users_migrating
-          (id, username, display_name, email, password_hash, role, status, avatar, remark,
+          (id, username, display_name, email, email_lookup, password_hash, role, status, avatar, remark,
            data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
-           session_version, password_changed_at, privacy_notice_accepted_at, last_login_ip,
-           created_at, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           session_version, password_changed_at, privacy_notice_accepted_at, privacy_notice_version,
+           privacy_notice_summary, privacy_notice_ip, last_login_ip, created_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const legacy of rows) {
         insert.run(
@@ -467,6 +482,7 @@ export class DatabaseService implements OnModuleDestroy {
           String(legacy.username),
           String(legacy.display_name),
           String(legacy.email),
+          "",
           String(legacy.password_hash),
           mapLegacyRole(legacy.role),
           mapLegacyStatus(legacy.status),
@@ -480,7 +496,10 @@ export class DatabaseService implements OnModuleDestroy {
           null,
           0,
           String(legacy.created_at),
-          String(legacy.created_at),
+          "",
+          "",
+          "",
+          "",
           "",
           String(legacy.created_at),
           typeof legacy.last_active_at === "string" ? legacy.last_active_at : null,
@@ -572,6 +591,86 @@ export class DatabaseService implements OnModuleDestroy {
     this.connection
       .prepare("INSERT INTO visit_events (id, user_id, created_at) VALUES (?, ?, ?)")
       .run(randomUUID(), userId, new Date().toISOString());
+  }
+
+  cleanupExpiredPersonalData(
+    cutoffIso: string,
+    nowIso: string,
+  ): {
+    consentIps: number;
+    emailMfaChallenges: number;
+    loginIps: number;
+    sessions: number;
+    total: number;
+    visitEvents: number;
+  } {
+    this.connection.exec("BEGIN IMMEDIATE;");
+    try {
+      const visitEvents = toNumber(
+        (
+          this.connection
+            .prepare("DELETE FROM visit_events WHERE created_at < ?")
+            .run(cutoffIso) as { changes?: number | bigint }
+        ).changes,
+      );
+      const emailMfaChallenges = toNumber(
+        (
+          this.connection
+            .prepare(
+              `DELETE FROM email_mfa_challenges
+               WHERE (consumed_at IS NOT NULL AND consumed_at < ?)
+                  OR expires_at <= ?`,
+            )
+            .run(cutoffIso, nowIso) as { changes?: number | bigint }
+        ).changes,
+      );
+      const sessions = toNumber(
+        (
+          this.connection
+            .prepare("DELETE FROM auth_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?")
+            .run(nowIso) as { changes?: number | bigint }
+        ).changes,
+      );
+      const loginIps = toNumber(
+        (
+          this.connection
+            .prepare(
+              `UPDATE users SET last_login_ip = ''
+               WHERE last_active_at IS NOT NULL AND last_active_at < ? AND last_login_ip <> ''`,
+            )
+            .run(cutoffIso) as { changes?: number | bigint }
+        ).changes,
+      );
+      const consentIps = toNumber(
+        (
+          this.connection
+            .prepare(
+              `UPDATE users SET privacy_notice_ip = ''
+               WHERE privacy_notice_accepted_at <> ?
+                 AND privacy_notice_accepted_at < ?
+                 AND privacy_notice_ip <> ''`,
+            )
+            .run("", cutoffIso) as { changes?: number | bigint }
+        ).changes,
+      );
+      this.connection.exec("COMMIT;");
+      const total = visitEvents + emailMfaChallenges + sessions + loginIps + consentIps;
+      return {
+        consentIps,
+        emailMfaChallenges,
+        loginIps,
+        sessions,
+        total,
+        visitEvents,
+      };
+    } catch (error) {
+      try {
+        this.connection.exec("ROLLBACK;");
+      } catch {
+        // Preserve the original cleanup error.
+      }
+      throw error;
+    }
   }
 
   getRecentActivities(limit: number, actorId?: string): StoredActivity[] {
@@ -946,7 +1045,7 @@ export class DatabaseService implements OnModuleDestroy {
         input.codeHash,
         input.expiresAt,
         input.createdAt,
-        input.requestIp ?? null,
+        input.requestIp ? encryptStoredValue(input.requestIp) : null,
       );
   }
 

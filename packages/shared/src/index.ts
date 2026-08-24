@@ -177,6 +177,9 @@ export function isAdministratorRole(role: UserRole): boolean {
 export const ACCOUNT_PASSWORD_MIN_LENGTH = 8 as const;
 export const ADMIN_PASSWORD_MIN_LENGTH = 12 as const;
 export const PASSWORD_EXPIRY_WARNING_DAYS = 14 as const;
+export const PRIVACY_NOTICE_VERSION = "v1.0" as const;
+export const PRIVACY_NOTICE_SUMMARY =
+  "系统仅采集账号识别、岗位授权、账号通知和安全审计所必需的信息，并提供查询、导出、更正和注销权利。";
 
 const COMMON_ACCOUNT_PASSWORDS = new Set([
   "12345678",
@@ -272,6 +275,7 @@ export interface AuthUser {
   role: UserRole;
   dataScope: DataScope;
   mfaEnabled: boolean;
+  privacyNoticeVersion?: string;
   email?: string;
   avatar?: string;
   remark?: string;
@@ -310,7 +314,7 @@ export interface SetupAdminRequest {
   displayName: string;
   email: string;
   password: string;
-  privacyNoticeAccepted?: boolean;
+  privacyNoticeAccepted: boolean;
 }
 
 export interface MetricItem {
@@ -404,11 +408,15 @@ export interface CreateUserRequest {
   role: UserRole;
   status?: UserStatus;
   remark?: string;
-  privacyNoticeAccepted?: boolean;
+  privacyNoticeAccepted: boolean;
 }
 
 export interface PrivacyEraseRequest {
   currentPassword: string;
+}
+
+export interface PrivacyConsentRequest {
+  accepted: boolean;
 }
 
 export interface UpdateUserStatusRequest {
@@ -590,14 +598,29 @@ export interface ComplianceOverview {
   latestVulnerabilityScan?: VulnerabilityScanRecord;
   privacy: {
     collectedFields: string[];
+    classifications: PrivacyFieldClassification[];
+    noticeVersion: string;
     purposes: string[];
     retentionDays: number;
+    retentionCleanup: string;
     rights: string[];
   };
 }
 
+export interface PrivacyFieldClassification {
+  field: string;
+  category: string;
+  purpose: string;
+  required: boolean;
+}
+
 export interface PersonalDataExport {
   exportedAt: string;
+  privacyNotice: {
+    acceptedAt: string;
+    summary: string;
+    version: string;
+  };
   user: Omit<AuthUser, "mfaEnabled"> & { mfaEnabled: boolean };
   auditRecords: AuditRecord[];
 }

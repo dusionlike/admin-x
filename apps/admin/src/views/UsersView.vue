@@ -16,6 +16,8 @@ import {
   getAccountPasswordPolicyError,
   getErrorMessage,
   getRoleDefinition,
+  PRIVACY_NOTICE_SUMMARY,
+  PRIVACY_NOTICE_VERSION,
   ROLE_DEFINITIONS,
 } from "@admin-x/shared";
 
@@ -634,7 +636,9 @@ void loadUsers();
         </p>
         <el-form-item prop="privacyNoticeAccepted">
           <el-checkbox v-model="form.privacyNoticeAccepted">
-            已告知该成员采集目的，并同意仅保存业务必需的个人信息。
+            已告知该成员采集目的，并确认个人信息保护告知（{{ PRIVACY_NOTICE_VERSION }}）。{{
+              PRIVACY_NOTICE_SUMMARY
+            }}
           </el-checkbox>
         </el-form-item>
         <div class="form-grid">

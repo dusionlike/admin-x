@@ -13,7 +13,13 @@ import type {
   UpdateProfileRequest,
   UserRole,
 } from "@admin-x/shared";
-import { getAccountPasswordPolicyError, getErrorMessage, getRoleDefinition } from "@admin-x/shared";
+import {
+  getAccountPasswordPolicyError,
+  getErrorMessage,
+  getRoleDefinition,
+  PRIVACY_NOTICE_SUMMARY,
+  PRIVACY_NOTICE_VERSION,
+} from "@admin-x/shared";
 
 import { usersApi } from "@/api/users";
 import { authApi } from "@/api/auth";
@@ -31,6 +37,7 @@ const cropVisible = ref(false);
 const cropSource = ref("");
 const saving = ref(false);
 const passwordSaving = ref(false);
+const privacyConsentSaving = ref(false);
 const passwordVisible = ref(false);
 const mfaVisible = ref(false);
 const mfaLoading = ref(false);
@@ -302,6 +309,26 @@ async function saveProfile() {
   }
 }
 
+async function acceptPrivacyNotice() {
+  try {
+    await ElMessageBox.confirm(
+      `${PRIVACY_NOTICE_SUMMARY} 当前告知版本：${PRIVACY_NOTICE_VERSION}。确认继续？`,
+      "确认个人信息保护告知",
+      { confirmButtonText: "确认并继续", cancelButtonText: "取消" },
+    );
+    privacyConsentSaving.value = true;
+    const user = await usersApi.acceptPrivacyNotice({ accepted: true });
+    authStore.updateUser(user);
+    ElMessage.success("个人信息保护告知已确认");
+  } catch (error: unknown) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(getErrorMessage(error, "告知确认失败"));
+    }
+  } finally {
+    privacyConsentSaving.value = false;
+  }
+}
+
 async function savePassword() {
   const valid = await passwordFormRef.value?.validate().catch(() => false);
   if (!valid) return;
@@ -349,6 +376,20 @@ onMounted(() => {
       type="warning"
     >
       当前密码将在 {{ passwordStatus.daysRemaining }} 天后到期，请及时修改。
+    </el-alert>
+
+    <el-alert
+      v-if="profile && profile.privacyNoticeVersion !== PRIVACY_NOTICE_VERSION"
+      class="privacy-notice-alert"
+      :closable="false"
+      show-icon
+      title="需要确认个人信息保护告知"
+      type="info"
+    >
+      当前账号尚未确认最新告知版本 {{ PRIVACY_NOTICE_VERSION }}。{{ PRIVACY_NOTICE_SUMMARY }}
+      <el-button text type="primary" :loading="privacyConsentSaving" @click="acceptPrivacyNotice">
+        阅读并确认
+      </el-button>
     </el-alert>
 
     <div class="profile-grid">

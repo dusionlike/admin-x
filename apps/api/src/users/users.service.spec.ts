@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { expect, test } from "vite-plus/test";
+import { PRIVACY_NOTICE_VERSION } from "@admin-x/shared";
 
 import { DatabaseService } from "../database/database.service.js";
 import { verifyPassword } from "../auth/password.js";
@@ -16,6 +17,7 @@ test("persists and filters users in SQLite", () => {
     displayName: "初始管理员",
     email: "admin@example.com",
     password: "OwnerPass123!",
+    privacyNoticeAccepted: true,
     username: "admin",
   });
 
@@ -33,6 +35,7 @@ test("encrypts user personal fields at rest while preserving application search"
     displayName: "加密管理员",
     email: "encrypted@example.com",
     password: "OwnerPass123!",
+    privacyNoticeAccepted: true,
     username: "encrypted-admin",
   });
 
@@ -66,6 +69,7 @@ test("creates and updates a user", () => {
     displayName: "测试成员",
     email: "test@admin-x.dev",
     password: "MemberPass123!",
+    privacyNoticeAccepted: true,
     role: "operator",
     username: "tester",
   });
@@ -82,6 +86,7 @@ test("allows the system administrator to bootstrap one active security administr
     displayName: "系统管理员",
     email: "bootstrap-system@admin-x.dev",
     password: "SystemPass123!",
+    privacyNoticeAccepted: true,
     username: "bootstrap-system",
   });
   const systemActor = service.findAuthenticatedUser(systemAdmin.id)?.user;
@@ -92,6 +97,7 @@ test("allows the system administrator to bootstrap one active security administr
       displayName: "安全管理员",
       email: "bootstrap-security@admin-x.dev",
       password: "SecurityPass123!",
+      privacyNoticeAccepted: true,
       role: "security-admin",
       status: "invited",
       username: "bootstrap-security",
@@ -107,6 +113,7 @@ test("allows the system administrator to bootstrap one active security administr
         displayName: "第二安全管理员",
         email: "bootstrap-security-2@admin-x.dev",
         password: "SecurityPass456!",
+        privacyNoticeAccepted: true,
         role: "security-admin",
         status: "active",
         username: "bootstrap-security-2",
@@ -124,12 +131,14 @@ test("allows bootstrap role assignment only until a security administrator exist
     displayName: "系统管理员",
     email: "system@admin-x.dev",
     password: "SystemPass123!",
+    privacyNoticeAccepted: true,
     username: "system-admin",
   });
   const firstUser = service.create({
     displayName: "安全管理员",
     email: "security@admin-x.dev",
     password: "SecurityPass123!",
+    privacyNoticeAccepted: true,
     role: "operator",
     status: "active",
     username: "security-admin",
@@ -145,6 +154,7 @@ test("allows bootstrap role assignment only until a security administrator exist
     displayName: "业务管理员",
     email: "business@admin-x.dev",
     password: "BusinessPass123!",
+    privacyNoticeAccepted: true,
     role: "operator",
     username: "business-admin",
   });
@@ -248,6 +258,7 @@ test("protects the current and last active administrator", () => {
     displayName: "管理员",
     email: "admin@admin-x.dev",
     password: "OwnerPass123!",
+    privacyNoticeAccepted: true,
     username: "admin",
   });
   const current = service.findAuthenticatedUser(admin.id)?.user;
@@ -269,6 +280,7 @@ test("updates the current profile and persists a cropped avatar", () => {
     displayName: "旧名称",
     email: "profile@admin-x.dev",
     password: "OwnerPass123!",
+    privacyNoticeAccepted: true,
     username: "profile-admin",
   });
   const avatar = "data:image/png;base64,iVBORw0KGgo=";
@@ -294,6 +306,7 @@ test("updates the current password only after verifying the old password", () =>
     displayName: "密码管理员",
     email: "password@admin-x.dev",
     password: "OwnerPass123!",
+    privacyNoticeAccepted: true,
     username: "password-admin",
   });
 
@@ -337,12 +350,14 @@ test("reports password expiry and lets a system administrator reset a member pas
     displayName: "重置管理员",
     email: "reset-admin@admin-x.dev",
     password: "ResetAdmin123!",
+    privacyNoticeAccepted: true,
     username: "reset-admin",
   });
   const member = service.create({
     displayName: "过期成员",
     email: "expired-member@admin-x.dev",
     password: "ExpiredMember123!",
+    privacyNoticeAccepted: true,
     role: "operator",
     status: "active",
     username: "expired-member",
@@ -369,12 +384,14 @@ test("securely clears deleted user storage and its server sessions", () => {
     displayName: "清除管理员",
     email: "erase-admin@admin-x.dev",
     password: "EraseAdmin123!",
+    privacyNoticeAccepted: true,
     username: "erase-admin",
   });
   const member = service.create({
     displayName: "待清除成员",
     email: "erase-member@admin-x.dev",
     password: "EraseMember123!",
+    privacyNoticeAccepted: true,
     role: "operator",
     status: "active",
     username: "erase-member",
@@ -445,5 +462,104 @@ test("stores audit context and prevents audit records from being changed or dele
     "append-only",
   );
   expect(() => database.connection.exec("DELETE FROM activity_logs")).toThrow("append-only");
+  database.onModuleDestroy();
+});
+
+test("requires versioned privacy consent and supports re-consent", () => {
+  const database = new DatabaseService(":memory:");
+  const service = new UsersService(database);
+
+  expect(() =>
+    service.createAdmin({
+      displayName: "未确认管理员",
+      email: "privacy-required@admin-x.dev",
+      password: "PrivacyRequired123!",
+      privacyNoticeAccepted: false,
+      username: "privacy-required",
+    }),
+  ).toThrow("必须先阅读并同意个人信息保护告知");
+
+  const admin = service.createAdmin(
+    {
+      displayName: "隐私管理员",
+      email: "privacy-version@admin-x.dev",
+      password: "PrivacyVersion123!",
+      privacyNoticeAccepted: true,
+      username: "privacy-version",
+    },
+    { ipAddress: "192.168.1.30", requestId: "privacy-consent" },
+  );
+  const raw = database.connection
+    .prepare(
+      "SELECT privacy_notice_accepted_at, privacy_notice_ip, privacy_notice_summary, privacy_notice_version FROM users WHERE id = ?",
+    )
+    .get(admin.id) as {
+    privacy_notice_accepted_at?: string;
+    privacy_notice_ip?: string;
+    privacy_notice_summary?: string;
+    privacy_notice_version?: string;
+  };
+  expect(raw.privacy_notice_accepted_at).toBeTruthy();
+  expect(raw.privacy_notice_ip).toMatch(/^v1:/u);
+  expect(raw.privacy_notice_ip).not.toContain("192.168.1.30");
+  expect(raw.privacy_notice_summary).toBeTruthy();
+  expect(raw.privacy_notice_version).toBe(PRIVACY_NOTICE_VERSION);
+  expect(service.findAuthenticatedUser(admin.id)?.user.privacyNoticeVersion).toBe(
+    PRIVACY_NOTICE_VERSION,
+  );
+  expect(service.exportPersonalData(admin.id).privacyNotice.summary).toBeTruthy();
+
+  database.connection
+    .prepare("UPDATE users SET privacy_notice_version = '' WHERE id = ?")
+    .run(admin.id);
+  expect(service.findAuthenticatedUser(admin.id)?.user.privacyNoticeVersion).toBeUndefined();
+  service.acceptPrivacyNotice(
+    admin.id,
+    { accepted: true },
+    { ipAddress: "192.168.1.31", requestId: "privacy-reconsent" },
+  );
+  expect(service.findAuthenticatedUser(admin.id)?.user.privacyNoticeVersion).toBe(
+    PRIVACY_NOTICE_VERSION,
+  );
+  database.onModuleDestroy();
+});
+
+test("masks personal email in the security administrator user directory and audits access", () => {
+  const database = new DatabaseService(":memory:");
+  const service = new UsersService(database);
+  const systemAdmin = service.createAdmin({
+    displayName: "系统管理员",
+    email: "privacy-system@admin-x.dev",
+    password: "PrivacySystem123!",
+    privacyNoticeAccepted: true,
+    username: "privacy-system",
+  });
+  const securityAdmin = service.create(
+    {
+      displayName: "安全管理员",
+      email: "privacy-security@admin-x.dev",
+      password: "PrivacySecurity123!",
+      privacyNoticeAccepted: true,
+      role: "security-admin",
+      status: "active",
+      username: "privacy-security",
+    },
+    service.findAuthenticatedUser(systemAdmin.id)?.user,
+  );
+  const actor = service.findAuthenticatedUser(securityAdmin.id)?.user;
+  const result = service.list({ page: 1, pageSize: 10 }, actor, {
+    ipAddress: "10.0.0.30",
+    requestId: "privacy-directory",
+  });
+
+  expect(result.items.find((item) => item.id === systemAdmin.id)?.email).toBe("pr***@admin-x.dev");
+  expect(result.items.find((item) => item.id === securityAdmin.id)?.email).toBe(
+    "privacy-security@admin-x.dev",
+  );
+  expect(
+    database.connection
+      .prepare("SELECT COUNT(*) AS count FROM activity_logs WHERE action = 'privacy.access'")
+      .get(),
+  ).toEqual({ count: 1 });
   database.onModuleDestroy();
 });

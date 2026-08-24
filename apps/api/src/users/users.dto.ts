@@ -23,6 +23,7 @@ import type {
   ResetUserPasswordRequest,
   UpdatePasswordRequest,
   UpdateProfileRequest,
+  PrivacyConsentRequest,
   UpdateUserDataScopeRequest,
   UpdateUserRoleRequest,
   UserListQuery,
@@ -70,8 +71,7 @@ export class CreateUserDto implements CreateUserRequest {
   remark?: string;
 
   @IsBoolean({ message: "个人信息保护告知确认值不正确" })
-  @IsOptional()
-  privacyNoticeAccepted?: boolean;
+  privacyNoticeAccepted!: boolean;
 }
 
 export class UpdateUserStatusDto {
@@ -155,6 +155,11 @@ export class PrivacyEraseDto {
   @IsString({ message: "当前密码必须是字符串" })
   @MaxLength(128, { message: "当前密码不能超过 128 个字符" })
   currentPassword!: string;
+}
+
+export class PrivacyConsentDto implements PrivacyConsentRequest {
+  @IsBoolean({ message: "个人信息保护告知确认值不正确" })
+  accepted!: boolean;
 }
 
 export class UserListQueryDto implements UserListQuery {

@@ -93,8 +93,7 @@ export class SetupAdminDto implements SetupAdminRequest {
   username!: string;
 
   @IsBoolean({ message: "个人信息保护告知确认值不正确" })
-  @IsOptional()
-  privacyNoticeAccepted?: boolean;
+  privacyNoticeAccepted!: boolean;
 }
 
 export class MfaSetupDto {

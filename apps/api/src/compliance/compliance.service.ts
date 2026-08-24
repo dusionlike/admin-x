@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+import type { OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 
 import type {
   AuthUser,
@@ -15,17 +16,37 @@ import type {
   ComplianceOverview,
   VulnerabilityScanRecord,
 } from "@admin-x/shared";
+import { PRIVACY_NOTICE_SUMMARY, PRIVACY_NOTICE_VERSION } from "@admin-x/shared";
 
 import type { AuditContext } from "../database/database.service.js";
 import { DatabaseService } from "../database/database.service.js";
+import {
+  getPersonalDataRetentionDays,
+  PRIVACY_FIELD_CLASSIFICATIONS,
+} from "../privacy/privacy-policy.js";
 import type { CreateVulnerabilityScanDto } from "./compliance.dto.js";
 
 const AUDIT_RETENTION_MONTHS = 12;
 const BACKUP_RETENTION_DAYS = 30;
 
 @Injectable()
-export class ComplianceService {
+export class ComplianceService implements OnModuleInit, OnModuleDestroy {
+  private retentionTimer: ReturnType<typeof setInterval> | undefined;
+
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
+
+  onModuleInit(): void {
+    this.runPrivacyRetentionCleanup();
+    this.retentionTimer = setInterval(() => this.runPrivacyRetentionCleanup(), 86_400_000);
+    this.retentionTimer.unref?.();
+  }
+
+  onModuleDestroy(): void {
+    if (this.retentionTimer) {
+      clearInterval(this.retentionTimer);
+      this.retentionTimer = undefined;
+    }
+  }
 
   getOverview(): ComplianceOverview {
     const policy = this.database.getSecurityPolicy();
@@ -55,8 +76,11 @@ export class ComplianceService {
     );
     const userCount = this.count("SELECT COUNT(*) AS count FROM users");
     const acceptedPrivacyCount = this.count(
-      "SELECT COUNT(*) AS count FROM users WHERE privacy_notice_accepted_at <> ''",
+      "SELECT COUNT(*) AS count FROM users WHERE privacy_notice_accepted_at <> '' AND privacy_notice_version = ? AND privacy_notice_summary = ?",
+      PRIVACY_NOTICE_VERSION,
+      PRIVACY_NOTICE_SUMMARY,
     );
+    const privacyRetentionDays = getPersonalDataRetentionDays();
 
     const checks: ComplianceCheck[] = [
       this.check(
@@ -241,8 +265,8 @@ export class ComplianceService {
         "个人信息保护",
         "个人信息保护",
         "只采集必要字段并提供查询、更正、导出和注销权利",
-        userCount > 0 && acceptedPrivacyCount === userCount,
-        "仅采集用户名、显示名、邮箱、职责和必要备注；注册确认告知，支持资料更正、个人数据导出和注销。",
+        userCount > 0 && acceptedPrivacyCount === userCount && privacyRetentionDays > 0,
+        `当前账号均已确认个人信息保护告知 ${PRIVACY_NOTICE_VERSION}；支持资料更正、导出、注销，系统按 ${privacyRetentionDays} 天策略清理到期访问数据。`,
       ),
     ];
     const passed = checks.filter((check) => check.status === "pass").length;
@@ -266,9 +290,13 @@ export class ComplianceService {
       overallStatus: hasFailure ? "fail" : passed === checks.length ? "pass" : "attention",
       passed,
       privacy: {
-        collectedFields: ["登录用户名", "显示名称", "邮箱", "岗位角色", "必要备注", "头像"],
+        classifications: PRIVACY_FIELD_CLASSIFICATIONS.map((item) => ({ ...item })),
+        collectedFields: PRIVACY_FIELD_CLASSIFICATIONS.map((item) => item.field),
+        noticeVersion: PRIVACY_NOTICE_VERSION,
         purposes: ["身份鉴别", "岗位授权", "安全审计", "账号通知"],
-        retentionDays: Number(process.env.PERSONAL_DATA_RETENTION_DAYS || 365),
+        retentionDays: privacyRetentionDays,
+        retentionCleanup:
+          "服务启动时执行一次，此后每天自动清理到期访问记录、过期挑战、失效会话和过期 IP 留痕",
         rights: ["查询和导出", "更正资料", "注销账号"],
       },
       score: Math.round((passed / checks.length) * 100),
@@ -434,8 +462,36 @@ export class ComplianceService {
     return resolve(configured?.trim() || join(dirname(this.database.databasePath), "backups"));
   }
 
-  private count(sql: string): number {
-    const row = this.database.connection.prepare(sql).get() as
+  runPrivacyRetentionCleanup(): {
+    consentIps: number;
+    emailMfaChallenges: number;
+    loginIps: number;
+    sessions: number;
+    total: number;
+    visitEvents: number;
+  } {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const cutoffIso = new Date(
+      now.getTime() - getPersonalDataRetentionDays() * 86_400_000,
+    ).toISOString();
+    const result = this.database.cleanupExpiredPersonalData(cutoffIso, nowIso);
+    if (result.total > 0) {
+      this.database.secureEraseStorage();
+      this.database.addActivity({
+        action: "privacy.retention.cleanup",
+        after: result,
+        description: `个人信息留存任务清理了 ${result.total} 条到期访问、挑战、会话或 IP 留痕`,
+        title: "自动清理到期个人信息",
+        type: "system",
+        resource: "privacy",
+      });
+    }
+    return result;
+  }
+
+  private count(sql: string, ...parameters: string[]): number {
+    const row = this.database.connection.prepare(sql).get(...parameters) as
       | { count?: number | bigint }
       | undefined;
     return Number(row?.count ?? 0);

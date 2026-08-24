@@ -18,6 +18,7 @@ import type {
   AuthUser,
   CreateUserRequest,
   PageResult,
+  PrivacyConsentRequest,
   PersonalDataExport,
   PasswordStatus,
   UserRecord,
@@ -31,6 +32,7 @@ import { getAuditContext } from "../auth/request-context.js";
 import { SensitiveActionGuard } from "../auth/sensitive-action.guard.js";
 import {
   CreateUserDto,
+  PrivacyConsentDto,
   PrivacyEraseDto,
   ResetUserPasswordDto,
   UpdatePasswordDto,
@@ -53,8 +55,9 @@ export class UsersController {
   @RequirePermissions("user:read")
   list(
     @Query(new DtoValidationPipe(UserListQueryDto)) query: UserListQueryDto,
+    @Request() request: AuthenticatedRequest,
   ): ApiResponse<PageResult<UserRecord>> {
-    return createApiResponse(this.usersService.list(query));
+    return createApiResponse(this.usersService.list(query, request.user, getAuditContext(request)));
   }
 
   @Post()
@@ -89,6 +92,20 @@ export class UsersController {
   @Get("me/password-status")
   passwordStatus(@Request() request: AuthenticatedRequest): ApiResponse<PasswordStatus> {
     return createApiResponse(this.usersService.getPasswordStatus(request.user.id));
+  }
+
+  @Post("me/privacy/consent")
+  acceptPrivacyNotice(
+    @Body(new DtoValidationPipe(PrivacyConsentDto)) body: PrivacyConsentDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<AuthUser> {
+    return createApiResponse(
+      this.usersService.acceptPrivacyNotice(
+        request.user.id,
+        body as PrivacyConsentRequest,
+        getAuditContext(request),
+      ),
+    );
   }
 
   @Post("me/privacy/erase")

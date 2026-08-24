@@ -11,6 +11,7 @@ import type {
   UpdateUserRoleRequest,
   PersonalDataExport,
   PasswordStatus,
+  PrivacyConsentRequest,
   ResetUserPasswordRequest,
 } from "@admin-x/shared";
 
@@ -95,6 +96,13 @@ export const usersApi = {
     return requestData<PersonalDataExport>({
       method: "GET",
       url: "/users/me/privacy/export",
+    });
+  },
+  acceptPrivacyNotice(payload: PrivacyConsentRequest) {
+    return requestData<AuthUser>({
+      data: payload,
+      method: "POST",
+      url: "/users/me/privacy/consent",
     });
   },
   erasePersonalData(currentPassword: string) {

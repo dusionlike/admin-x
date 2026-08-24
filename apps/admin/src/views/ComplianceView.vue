@@ -370,10 +370,18 @@ onMounted(() => {
       <div>
         <strong>个人信息保护边界</strong>
         <p>
-          采集：{{ overview.privacy.collectedFields.join("、") }}。用途：{{
-            overview.privacy.purposes.join("、")
-          }}；保留 {{ overview.privacy.retentionDays }} 天，并提供
+          告知版本 {{ overview.privacy.noticeVersion }}；采集：{{
+            overview.privacy.collectedFields.join("、")
+          }}。用途：{{ overview.privacy.purposes.join("、") }}；保留
+          {{ overview.privacy.retentionDays }} 天。{{ overview.privacy.retentionCleanup }}；并提供
           {{ overview.privacy.rights.join("、") }} 权利。
+        </p>
+        <p v-if="overview.privacy.classifications.length" class="privacy-card__classification">
+          分类：{{
+            overview.privacy.classifications
+              .map((item) => `${item.field}（${item.category}）`)
+              .join("、")
+          }}
         </p>
       </div>
     </el-card>
@@ -582,6 +590,9 @@ onMounted(() => {
   color: var(--ax-muted);
   font-size: 11px;
   line-height: 1.7;
+}
+.privacy-card__classification {
+  margin-top: 4px !important;
 }
 @media (max-width: 1000px) {
   .compliance-summary-grid {

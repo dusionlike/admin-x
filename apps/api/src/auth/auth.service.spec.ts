@@ -35,6 +35,7 @@ test("issues a database-backed session and revokes the older session when the li
       displayName: "系统管理员",
       email: "session@admin-x.dev",
       password: "AdminPass123!",
+      privacyNoticeAccepted: true,
       username: "session-admin",
     },
     context,
@@ -57,6 +58,7 @@ test("supports an expired-password reminder and self-service recovery flow", () 
       displayName: "过期密码管理员",
       email: "expired-password@admin-x.dev",
       password: "ExpiredPassword123!",
+      privacyNoticeAccepted: true,
       username: "expired-password-admin",
     },
     context,
@@ -93,6 +95,7 @@ test("locks an account after repeated password failures and records the blocked 
       displayName: "锁定测试",
       email: "lockout@admin-x.dev",
       password: "LockoutPass123!",
+      privacyNoticeAccepted: true,
       username: "lockout-admin",
     },
     context,
@@ -125,6 +128,7 @@ test("encrypts MFA secrets at rest before binding", () => {
     displayName: "MFA 管理员",
     email: "mfa@admin-x.dev",
     password: "MfaAdminPass123!",
+    privacyNoticeAccepted: true,
     username: "mfa-admin",
   });
   const mfa = auth.setupMfa(setup.user.id, "MfaAdminPass123!");
@@ -146,6 +150,7 @@ test("keeps email MFA disabled by default and supports the split configuration f
       displayName: "邮箱管理员",
       email: "email-mfa@admin-x.dev",
       password: "EmailMfaAdmin123!",
+      privacyNoticeAccepted: true,
       username: "email-mfa-admin",
     },
     context,
@@ -200,6 +205,7 @@ test("binds sensitive-operation reauthentication to the current session version"
     displayName: "二次验证管理员",
     email: "reauth@admin-x.dev",
     password: "ReauthAdminPass123!",
+    privacyNoticeAccepted: true,
     username: "reauth-admin",
   });
   const current = users.findAuthenticatedUser(setup.user.id);

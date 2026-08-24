@@ -5,7 +5,12 @@ import { ElMessage, type FormInstance, type FormRules } from "element-plus";
 import { ArrowRight, Lock, Message, User } from "@element-plus/icons-vue";
 
 import type { LoginRequest, SetupAdminRequest } from "@admin-x/shared";
-import { getAccountPasswordPolicyError, getErrorMessage } from "@admin-x/shared";
+import {
+  getAccountPasswordPolicyError,
+  getErrorMessage,
+  PRIVACY_NOTICE_SUMMARY,
+  PRIVACY_NOTICE_VERSION,
+} from "@admin-x/shared";
 
 import { authApi } from "@/api/auth";
 import ThemeToggleButton from "@/components/ThemeToggleButton.vue";
@@ -406,7 +411,9 @@ onMounted(() => {
           </el-form-item>
           <el-form-item prop="privacyNoticeAccepted">
             <el-checkbox v-model="setupForm.privacyNoticeAccepted">
-              我已阅读并同意个人信息保护告知，仅采集账号管理所必需的信息。
+              我已阅读并同意个人信息保护告知（{{ PRIVACY_NOTICE_VERSION }}）。{{
+                PRIVACY_NOTICE_SUMMARY
+              }}
             </el-checkbox>
           </el-form-item>
           <el-button

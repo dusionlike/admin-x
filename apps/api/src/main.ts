@@ -46,7 +46,7 @@ async function bootstrap() {
     response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     response.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:3000 http://localhost:5173",
+      "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; form-action 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' http://localhost:3000 http://localhost:5173",
     );
     response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     response.setHeader("Cross-Origin-Opener-Policy", "same-origin");

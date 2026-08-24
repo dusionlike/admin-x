@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Inject,
+  InternalServerErrorException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -14,6 +15,7 @@ import type {
   CreateUserRequest,
   DataScope,
   DataScopeType,
+  SecurityLevel,
   PageResult,
   PersonalDataExport,
   PasswordStatus,
@@ -24,6 +26,7 @@ import type {
   UpdatePasswordRequest,
   UpdateProfileRequest,
   UpdateUserDataScopeRequest,
+  UpdateUserSecurityLevelRequest,
   UserListQuery,
   UserRecord,
   UserRole,
@@ -31,6 +34,8 @@ import type {
 } from "@admin-x/shared";
 import {
   createPageMeta,
+  canAccessData,
+  defaultSecurityLevelForRole,
   getAccountPasswordPolicyError,
   getRoleDefinition,
   isAdministratorRole,
@@ -59,6 +64,7 @@ interface UserRow {
   email: string;
   password_hash: string;
   role: UserRole;
+  security_level: SecurityLevel;
   status: UserStatus;
   avatar: string;
   remark: string;
@@ -98,7 +104,7 @@ export interface LoginCredentials {
 
 const USER_COLUMNS = `
   id, username, display_name, email, password_hash, role, status, avatar, remark,
-  data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
+  security_level, data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
   session_version, password_changed_at, privacy_notice_accepted_at, privacy_notice_version,
   privacy_notice_summary, privacy_notice_ip, last_login_ip,
   created_at, last_active_at`;
@@ -126,15 +132,29 @@ export class UsersService {
          ORDER BY created_at DESC`,
       )
       .all(...parameters)
-      .map((row) => decryptUserRow(row as unknown as UserRow));
+      .map((row) => {
+        const typedRow = row as unknown as UserRow;
+        if (!this.database.verifyUserIntegrity(typedRow.id)) {
+          throw new InternalServerErrorException("用户关键字段完整性校验失败");
+        }
+        return decryptUserRow(typedRow);
+      });
+    const scopedRows = actor
+      ? rows.filter((row) =>
+          canAccessData(actor.dataScope, actor.id, {
+            id: row.id,
+            ownerId: row.id,
+          }),
+        )
+      : rows;
     const keyword = normalized.keyword.toLowerCase();
     const filteredRows = keyword
-      ? rows.filter((row) =>
+      ? scopedRows.filter((row) =>
           [row.display_name, row.username, row.email].some((value) =>
             value.toLowerCase().includes(keyword),
           ),
         )
-      : rows;
+      : scopedRows;
     const start = (normalized.page - 1) * normalized.pageSize;
 
     const result = {
@@ -286,6 +306,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(status, status, id);
+    this.database.refreshUserIntegrityMac(id);
     this.database.revokeUserSessions(id);
     const updated = this.findRowById(id)!;
     const updatedUser = toPublicRecord(updated);
@@ -317,6 +338,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(id);
+    this.database.refreshUserIntegrityMac(id);
     this.database.revokeUserSessions(id);
     const updated = toPublicRecord(this.findRowById(id)!);
     this.database.addActivity({
@@ -368,11 +390,12 @@ export class UsersService {
     this.database.connection
       .prepare(
         `UPDATE users
-         SET role = ?, data_scope = ?, data_scope_ids = '[]',
+         SET role = ?, security_level = ?, data_scope = ?, data_scope_ids = '[]',
              session_version = session_version + 1
          WHERE id = ?`,
       )
-      .run(role, defaultDataScopeForRole(role), id);
+      .run(role, defaultSecurityLevelForRole(role), defaultDataScopeForRole(role), id);
+    this.database.refreshUserIntegrityMac(id);
     this.database.revokeUserSessions(id);
     const updated = this.findRowById(id)!;
     const updatedUser = toPublicRecord(updated);
@@ -421,6 +444,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(dataScope.type, JSON.stringify(dataScope.ids), id);
+    this.database.refreshUserIntegrityMac(id);
     this.database.revokeUserSessions(id);
     const updatedUser = toPublicRecord(this.findRowById(id)!);
     this.database.addActivity({
@@ -436,6 +460,56 @@ export class UsersService {
       targetId: id,
     });
     return updatedUser;
+  }
+
+  updateSecurityLevel(
+    id: string,
+    input: UpdateUserSecurityLevelRequest,
+    actor: AuthUser,
+    context?: AuditContext,
+  ): UserRecord {
+    if (actor.role !== "security-admin") {
+      throw new ForbiddenException("只有安全管理员可以配置用户安全级别");
+    }
+    const current = this.findRowById(id);
+    if (!current) {
+      throw new NotFoundException("用户不存在");
+    }
+    if (current.role === "system-admin") {
+      throw new ForbiddenException("安全管理员不能调整系统管理员的安全级别");
+    }
+    const levels: SecurityLevel[] = ["public", "internal", "secret", "confidential"];
+    if (!levels.includes(input.securityLevel)) {
+      throw new BadRequestException("用户安全级别不合法");
+    }
+    if (current.security_level === input.securityLevel) {
+      return toPublicRecord(current);
+    }
+
+    const before = toPublicRecord(current);
+    this.database.connection
+      .prepare(
+        `UPDATE users
+         SET security_level = ?, session_version = session_version + 1
+         WHERE id = ?`,
+      )
+      .run(input.securityLevel, id);
+    this.database.refreshUserIntegrityMac(id);
+    this.database.revokeUserSessions(id);
+    const updated = toPublicRecord(this.findRowById(id)!);
+    this.database.addActivity({
+      action: "security-level.update",
+      actor: toAuditActor(actor),
+      after: auditUser(updated),
+      before: auditUser(before),
+      context,
+      description: `${actor.displayName}（@${actor.username}）将 ${before.displayName} 的安全级别调整为「${input.securityLevel}」`,
+      title: "调整用户安全级别",
+      type: "update",
+      resource: "security-label",
+      targetId: id,
+    });
+    return updated;
   }
 
   updateProfile(id: string, input: UpdateProfileRequest, context?: AuditContext): AuthUser {
@@ -538,6 +612,7 @@ export class UsersService {
          WHERE id = ?`,
       )
       .run(hashPassword(password), now, id);
+    this.database.refreshUserIntegrityMac(id);
     this.database.revokeUserSessions(id);
     const auditActor = actor ? toAuditActor(actor) : toAuditActor(toAuthUser(user));
     const isResetByAdministrator = Boolean(actor && actor.id !== id);
@@ -880,6 +955,7 @@ export class UsersService {
     this.database.connection
       .prepare("UPDATE users SET mfa_secret = ? WHERE id = ?")
       .run(secret ? encryptMfaSecret(secret) : "", id);
+    this.database.refreshUserIntegrityMac(id);
     this.database.addActivity({
       action: "mfa.setup",
       actor: toAuditActor(toAuthUser(row)),
@@ -902,6 +978,7 @@ export class UsersService {
         "UPDATE users SET mfa_enabled = ?, session_version = session_version + 1 WHERE id = ?",
       )
       .run(enabled ? 1 : 0, id);
+    this.database.refreshUserIntegrityMac(id);
     this.database.revokeUserSessions(id);
     this.database.addActivity({
       action: enabled ? "mfa.enable" : "mfa.disable",
@@ -1021,6 +1098,10 @@ export class UsersService {
         now,
         null,
       );
+    this.database.connection
+      .prepare("UPDATE users SET security_level = ? WHERE id = ?")
+      .run(defaultSecurityLevelForRole(input.role), id);
+    this.database.refreshUserIntegrityMac(id);
 
     return this.findById(id);
   }
@@ -1053,14 +1134,26 @@ export class UsersService {
     const row = this.database.connection
       .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`)
       .get(id) as unknown as UserRow | undefined;
-    return row ? decryptUserRow(row) : null;
+    if (!row) {
+      return null;
+    }
+    if (!this.database.verifyUserIntegrity(id)) {
+      throw new InternalServerErrorException("用户关键字段完整性校验失败");
+    }
+    return decryptUserRow(row);
   }
 
   private findRowByUsername(username: string): UserRow | null {
     const row = this.database.connection
       .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE username = ?`)
       .get(username.trim()) as unknown as UserRow | undefined;
-    return row ? decryptUserRow(row) : null;
+    if (!row) {
+      return null;
+    }
+    if (!this.database.verifyUserIntegrity(String(row.id))) {
+      throw new InternalServerErrorException("用户关键字段完整性校验失败");
+    }
+    return decryptUserRow(row);
   }
 }
 
@@ -1088,6 +1181,7 @@ function toPublicRecord(row: UserRow, actor?: AuthUser): UserRecord {
     mfaEnabled: Boolean(row.mfa_enabled),
     remark: row.remark,
     role: row.role,
+    securityLevel: row.security_level,
     status: row.status,
     username: row.username,
   };
@@ -1104,6 +1198,7 @@ function toAuthUser(row: UserRow): AuthUser {
     privacyNoticeVersion: row.privacy_notice_version || undefined,
     remark: row.remark,
     role: row.role,
+    securityLevel: row.security_level,
     username: row.username,
   };
   if (row.last_active_at) {
@@ -1113,7 +1208,7 @@ function toAuthUser(row: UserRow): AuthUser {
 }
 
 function canViewFullEmail(row: UserRow, actor?: AuthUser): boolean {
-  return !actor || actor.role === "system-admin" || actor.id === row.id;
+  return !actor || actor.id === row.id;
 }
 
 function auditUser(user: UserRecord | AuthUser): Record<string, unknown> {
@@ -1124,6 +1219,7 @@ function auditUser(user: UserRecord | AuthUser): Record<string, unknown> {
     id: user.id,
     mfaEnabled: user.mfaEnabled,
     role: user.role,
+    securityLevel: user.securityLevel,
     status: "status" in user ? user.status : undefined,
     username: user.username,
   };

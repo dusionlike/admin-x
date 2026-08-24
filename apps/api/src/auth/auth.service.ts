@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
@@ -12,6 +13,7 @@ import jwt from "jsonwebtoken";
 
 import type {
   AuthUser,
+  AuthSession,
   ChangeExpiredPasswordRequest,
   LoginRequest,
   LoginResponse,
@@ -55,7 +57,7 @@ export class AuthService {
       throw new UnauthorizedException("初始化管理员失败，请重试");
     }
     this.usersService.markLogin(user.id, authenticated.user, context);
-    return this.issueToken(authenticated.user, authenticated.sessionVersion);
+    return this.issueToken(authenticated.user, authenticated.sessionVersion, false, context);
   }
 
   login(input: LoginRequest, context?: AuditContext): LoginResponse {
@@ -129,6 +131,7 @@ export class AuthService {
       { ...credentials.user, lastLoginAt: new Date().toISOString() },
       authenticatedUser.sessionVersion,
       mfaSatisfied,
+      context,
     );
   }
 
@@ -219,6 +222,33 @@ export class AuthService {
 
   logout(user: AuthUser, context?: AuditContext): null {
     this.usersService.invalidateSessions(user.id, user, context);
+    return null;
+  }
+
+  listSessions(userId: string, currentSessionId?: string): AuthSession[] {
+    return this.database.listActiveSessions(userId, currentSessionId);
+  }
+
+  revokeSession(user: AuthUser, sessionId: string, context?: AuditContext): null {
+    if (!this.database.revokeSession(user.id, sessionId)) {
+      throw new NotFoundException("会话不存在或已经失效");
+    }
+    this.database.addActivity({
+      action: "auth.session.revoke",
+      actor: {
+        displayName: user.displayName,
+        id: user.id,
+        role: user.role,
+        username: user.username,
+      },
+      context,
+      description: `${user.displayName}（@${user.username}）撤销了一个登录会话`,
+      result: "success",
+      title: "撤销登录会话",
+      type: "update",
+      resource: "auth-session",
+      targetId: sessionId,
+    });
     return null;
   }
 
@@ -401,7 +431,12 @@ export class AuthService {
     throw new UnauthorizedException("用户名或密码错误");
   }
 
-  private issueToken(user: AuthUser, sessionVersion: number, mfaVerified = false): LoginResponse {
+  private issueToken(
+    user: AuthUser,
+    sessionVersion: number,
+    mfaVerified = false,
+    context?: AuditContext,
+  ): LoginResponse {
     const policy = this.database.getSecurityPolicy();
     const expiresIn = Math.max(
       5 * 60,
@@ -423,7 +458,13 @@ export class AuthService {
         subject: user.id,
       },
     );
-    this.database.createSession(user.id, sessionId, expiresAt, policy.concurrentSessionLimit);
+    this.database.createSession(
+      user.id,
+      sessionId,
+      expiresAt,
+      policy.concurrentSessionLimit,
+      context,
+    );
 
     return {
       expiresIn,

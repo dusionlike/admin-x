@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import {
@@ -63,6 +63,12 @@ const activeMenu = computed(() => {
 
 const pageTitle = computed(() => String(route.meta.title ?? "工作台"));
 const unreadNotificationCount = ref(0);
+const sessionRemainingSeconds = ref(0);
+let sessionTimer: number | undefined;
+const sessionWarningText = computed(() => {
+  const minutes = Math.max(1, Math.ceil(sessionRemainingSeconds.value / 60));
+  return `当前登录会话将在约 ${minutes} 分钟后超时，请及时保存工作并重新登录。`;
+});
 
 async function handleCommand(command: string) {
   if (command === "profile") {
@@ -84,6 +90,21 @@ function showNotifications() {
   unreadNotificationCount.value = 0;
   ElMessage.info("暂无新的系统通知");
 }
+
+function refreshSessionCountdown() {
+  sessionRemainingSeconds.value = authStore.getSessionRemainingSeconds();
+}
+
+onMounted(() => {
+  refreshSessionCountdown();
+  sessionTimer = window.setInterval(refreshSessionCountdown, 15_000);
+});
+
+onBeforeUnmount(() => {
+  if (sessionTimer !== undefined) {
+    window.clearInterval(sessionTimer);
+  }
+});
 </script>
 
 <template>
@@ -226,6 +247,16 @@ function showNotifications() {
       </el-header>
 
       <el-main class="page-main">
+        <el-alert
+          v-if="sessionRemainingSeconds > 0 && sessionRemainingSeconds <= 300"
+          class="session-timeout-alert"
+          :closable="false"
+          show-icon
+          title="登录会话即将超时"
+          type="warning"
+        >
+          {{ sessionWarningText }}
+        </el-alert>
         <router-view />
       </el-main>
     </el-container>

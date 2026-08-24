@@ -1,4 +1,5 @@
 import type {
+  AuthSession,
   AuthUser,
   ChangeExpiredPasswordRequest,
   EmailMfaCodeResponse,
@@ -65,6 +66,18 @@ export const authApi = {
     return requestData<null>({
       method: "POST",
       url: "/auth/logout",
+    });
+  },
+  sessions() {
+    return requestData<AuthSession[]>({
+      method: "GET",
+      url: "/auth/sessions",
+    });
+  },
+  revokeSession(id: string) {
+    return requestData<null>({
+      method: "DELETE",
+      url: `/auth/sessions/${id}`,
     });
   },
   reauthenticate(currentPassword: string) {

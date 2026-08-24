@@ -6,6 +6,7 @@ import type { FormInstance, FormRules } from "element-plus";
 import { ArrowRight, Camera, Lock, Message, Setting, UserFilled } from "@element-plus/icons-vue";
 
 import type {
+  AuthSession,
   MfaSetupResponse,
   MfaStatus,
   PasswordStatus,
@@ -47,6 +48,8 @@ const mfaCode = ref("");
 const mfaSetup = ref<MfaSetupResponse | null>(null);
 const mfaStatus = ref<MfaStatus>({ configured: false, enabled: false });
 const passwordStatus = ref<PasswordStatus | null>(null);
+const sessions = ref<AuthSession[]>([]);
+const sessionsLoading = ref(false);
 const avatarInput = ref<HTMLInputElement>();
 const formRef = ref<FormInstance>();
 const passwordFormRef = ref<FormInstance>();
@@ -145,6 +148,45 @@ async function loadPasswordStatus() {
     passwordStatus.value = await usersApi.passwordStatus();
   } catch {
     // The account page remains usable if an older API does not expose password status yet.
+  }
+}
+
+async function loadSessions() {
+  sessionsLoading.value = true;
+  try {
+    sessions.value = await authApi.sessions();
+  } catch {
+    sessions.value = [];
+  } finally {
+    sessionsLoading.value = false;
+  }
+}
+
+function sessionLabel(session: AuthSession) {
+  return session.userAgent || "未知浏览器或客户端";
+}
+
+async function revokeSession(session: AuthSession) {
+  try {
+    await ElMessageBox.confirm(
+      session.current
+        ? "撤销当前会话后将立即退出登录，是否继续？"
+        : "撤销后该设备需要重新登录，是否继续？",
+      "撤销登录会话",
+      { type: "warning", confirmButtonText: "确认撤销", cancelButtonText: "取消" },
+    );
+    await authApi.revokeSession(session.id);
+    if (session.current) {
+      authStore.clearSession();
+      await router.push({ name: "login" });
+      return;
+    }
+    await loadSessions();
+    ElMessage.success("登录会话已撤销");
+  } catch (error: unknown) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(getErrorMessage(error, "撤销会话失败"));
+    }
   }
 }
 
@@ -353,6 +395,7 @@ async function savePassword() {
 onMounted(() => {
   void loadMfaStatus();
   void loadPasswordStatus();
+  void loadSessions();
 });
 </script>
 
@@ -479,6 +522,40 @@ onMounted(() => {
         <el-button v-else text type="danger" @click="disableMfa">停用 MFA</el-button>
         <el-button text type="primary" @click="exportPersonalData">导出个人数据</el-button>
         <el-button text type="danger" @click="erasePersonalData">注销账号</el-button>
+      </div>
+    </el-card>
+
+    <el-card class="sessions-card" shadow="never">
+      <div class="profile-card__heading">
+        <span class="profile-card__heading-icon"
+          ><el-icon><Lock /></el-icon
+        ></span>
+        <div>
+          <h2>登录会话</h2>
+          <p>查看当前账号的登录设备，发现异常时可单独撤销。</p>
+        </div>
+      </div>
+      <el-skeleton v-if="sessionsLoading" :rows="2" animated />
+      <el-empty v-else-if="!sessions.length" description="暂无有效登录会话" />
+      <div v-else class="session-list">
+        <div v-for="session in sessions" :key="session.id" class="session-item">
+          <div class="session-item__main">
+            <div class="session-item__title">
+              <strong>{{ sessionLabel(session) }}</strong>
+              <el-tag v-if="session.current" type="success" size="small">当前设备</el-tag>
+            </div>
+            <span>
+              {{ session.ipAddress || "未知 IP" }} · 最近活动 {{ formatDate(session.lastSeenAt) }}
+            </span>
+            <small
+              >登录于 {{ formatDate(session.createdAt) }}，预计
+              {{ formatDate(session.expiresAt) }} 超时</small
+            >
+          </div>
+          <el-button text type="danger" @click="revokeSession(session)">
+            {{ session.current ? "退出此设备" : "撤销" }}
+          </el-button>
+        </div>
       </div>
     </el-card>
 
@@ -860,6 +937,53 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 4px;
 }
+.sessions-card {
+  margin-top: 18px;
+}
+.sessions-card :deep(.el-card__body) {
+  padding: 24px 26px;
+}
+.session-list {
+  display: grid;
+  gap: 10px;
+  padding-top: 18px;
+}
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--ax-line-soft);
+}
+.session-item:last-child {
+  border-bottom: 0;
+}
+.session-item__main {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.session-item__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.session-item__title strong,
+.session-item__main span,
+.session-item__main small {
+  overflow: hidden;
+  color: var(--ax-heading);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-item__main span,
+.session-item__main small {
+  color: var(--ax-muted);
+  font-size: 11px;
+}
 .mfa-setup-result {
   display: grid;
   gap: 10px;
@@ -980,6 +1104,9 @@ onMounted(() => {
   }
   .profile-security-card :deep(.el-card__body) {
     flex-wrap: wrap;
+  }
+  .session-item {
+    align-items: flex-start;
   }
 }
 </style>

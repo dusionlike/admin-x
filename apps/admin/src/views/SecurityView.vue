@@ -7,7 +7,10 @@ import {
   ROLE_DEFINITIONS,
   type DataScopeType,
   type EmailMfaPolicyStatus,
+  type IntegrityInspection,
   type Permission,
+  type ResourceSecurityLabel,
+  type SecurityLevel,
   type SecurityPolicy,
 } from "@admin-x/shared";
 
@@ -48,6 +51,10 @@ const policyLoading = ref(false);
 const policySaving = ref(false);
 const emailMfaPolicyLoading = ref(false);
 const emailMfaPolicySaving = ref(false);
+const resourceLabelsLoading = ref(false);
+const resourceLabels = ref<ResourceSecurityLabel[]>([]);
+const integrityInspection = ref<IntegrityInspection | null>(null);
+const integrityLoading = ref(false);
 const ipRangeText = ref("");
 const emailMfaPolicy = reactive<EmailMfaPolicyStatus>({
   configured: false,
@@ -71,6 +78,15 @@ function permissionLabel(permission: Permission) {
 
 function dataScopeLabel(scope: DataScopeType) {
   return dataScopeLabels[scope];
+}
+
+function securityLevelLabel(level: SecurityLevel) {
+  return {
+    public: "公开",
+    internal: "内部",
+    secret: "秘密",
+    confidential: "机密",
+  }[level];
 }
 
 function applyPolicy(value: SecurityPolicy) {
@@ -174,9 +190,48 @@ async function saveEmailMfaPolicy() {
   }
 }
 
+async function loadResourceLabels() {
+  resourceLabelsLoading.value = true;
+  try {
+    resourceLabels.value = await securityApi.getResourceSecurityLabels();
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "资源安全标记加载失败"));
+  } finally {
+    resourceLabelsLoading.value = false;
+  }
+}
+
+async function loadIntegrityInspection() {
+  integrityLoading.value = true;
+  try {
+    integrityInspection.value = await securityApi.getIntegrityInspection();
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "完整性巡检结果加载失败"));
+  } finally {
+    integrityLoading.value = false;
+  }
+}
+
+async function saveResourceLabel(row: ResourceSecurityLabel) {
+  try {
+    if (!(await confirmSensitiveAction())) {
+      return;
+    }
+    const updated = await securityApi.updateResourceSecurityLabel(row.resource, {
+      label: row.label,
+    });
+    Object.assign(row, updated);
+    ElMessage.success("资源安全标记已保存");
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "资源安全标记保存失败"));
+  }
+}
+
 onMounted(() => {
   void loadPolicy();
   void loadEmailMfaPolicy();
+  void loadResourceLabels();
+  void loadIntegrityInspection();
 });
 </script>
 
@@ -300,6 +355,86 @@ onMounted(() => {
       </div>
     </el-card>
 
+    <el-card class="resource-label-card" shadow="never" v-loading="resourceLabelsLoading">
+      <template #header>
+        <div class="card-heading">
+          <div>
+            <strong>资源安全标记</strong>
+            <span>每次认证请求都会把用户安全级别与资源标记进行强制比较（MAC）。</span>
+          </div>
+        </div>
+      </template>
+      <el-table :data="resourceLabels" row-key="resource">
+        <el-table-column label="资源" min-width="150" prop="resource" />
+        <el-table-column label="用途说明" min-width="320" prop="description" />
+        <el-table-column label="安全标记" width="180">
+          <template #default="{ row }">
+            <el-select v-model="row.label" size="small">
+              <el-option
+                v-for="level in ['public', 'internal', 'secret', 'confidential']"
+                :key="level"
+                :label="securityLevelLabel(level as SecurityLevel)"
+                :value="level"
+              />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100">
+          <template #default="{ row }">
+            <el-button text type="primary" @click="saveResourceLabel(row)">保存</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card class="integrity-card" shadow="never" v-loading="integrityLoading">
+      <template #header>
+        <div class="card-heading">
+          <div>
+            <strong>数据完整性巡检</strong>
+            <span>服务启动时和每日维护任务自动检查用户关键字段及安全策略 MAC。</span>
+          </div>
+          <el-button text type="primary" @click="loadIntegrityInspection">立即巡检</el-button>
+        </div>
+      </template>
+      <div v-if="integrityInspection" class="integrity-summary">
+        <div>
+          <span>用户关键记录</span>
+          <strong
+            >{{ integrityInspection.users.checked }} 条，失败
+            {{ integrityInspection.users.failed }} 条</strong
+          >
+        </div>
+        <div>
+          <span>安全策略</span>
+          <strong>失败 {{ integrityInspection.securityPolicy.failed }} 项</strong>
+        </div>
+        <div>
+          <span>资源标记</span>
+          <strong>失败 {{ integrityInspection.resourceLabels.failed }} 项</strong>
+        </div>
+        <el-tag
+          :type="
+            integrityInspection.users.failed +
+              integrityInspection.securityPolicy.failed +
+              integrityInspection.resourceLabels.failed ===
+            0
+              ? 'success'
+              : 'danger'
+          "
+        >
+          {{
+            integrityInspection.users.failed +
+              integrityInspection.securityPolicy.failed +
+              integrityInspection.resourceLabels.failed ===
+            0
+              ? "完整性正常"
+              : "发现完整性异常"
+          }}
+        </el-tag>
+      </div>
+    </el-card>
+
     <el-card class="role-card" shadow="never">
       <template #header>
         <div class="card-heading">
@@ -416,6 +551,8 @@ onMounted(() => {
 
 .policy-card,
 .email-mfa-policy-card,
+.resource-label-card,
+.integrity-card,
 .role-card {
   margin-bottom: 16px;
 }
@@ -438,6 +575,24 @@ onMounted(() => {
   color: var(--ax-muted);
   font-size: 12px;
   line-height: 1.7;
+}
+
+.integrity-summary {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+  color: var(--ax-muted);
+  font-size: 12px;
+}
+
+.integrity-summary div span,
+.integrity-summary div strong {
+  display: block;
+}
+
+.integrity-summary div strong {
+  margin-top: 6px;
+  color: var(--ax-heading);
 }
 
 .policy-form {

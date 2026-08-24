@@ -8,6 +8,7 @@ import type {
   UpdateProfileRequest,
   UpdatePasswordRequest,
   UpdateUserDataScopeRequest,
+  UpdateUserSecurityLevelRequest,
   UpdateUserRoleRequest,
   PersonalDataExport,
   PasswordStatus,
@@ -77,6 +78,13 @@ export const usersApi = {
       data: payload,
       method: "PATCH",
       url: `/users/${id}/data-scope`,
+    });
+  },
+  updateSecurityLevel(id: string, payload: UpdateUserSecurityLevelRequest) {
+    return requestData<UserRecord>({
+      data: payload,
+      method: "PATCH",
+      url: `/users/${id}/security-level`,
     });
   },
   updateStatus(id: string, payload: UpdateUserStatusRequest) {

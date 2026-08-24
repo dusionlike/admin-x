@@ -25,10 +25,12 @@ import type {
   UpdateProfileRequest,
   PrivacyConsentRequest,
   UpdateUserDataScopeRequest,
+  UpdateUserSecurityLevelRequest,
   UpdateUserRoleRequest,
   UserListQuery,
   UserRole,
   UserStatus,
+  SecurityLevel,
 } from "@admin-x/shared";
 
 export class CreateUserDto implements CreateUserRequest {
@@ -106,6 +108,13 @@ export class UpdateUserDataScopeDto implements UpdateUserDataScopeRequest {
   @ValidateNested()
   @Type(() => DataScopeDto)
   dataScope!: DataScopeDto;
+}
+
+export class UpdateUserSecurityLevelDto implements UpdateUserSecurityLevelRequest {
+  @IsEnum(["public", "internal", "secret", "confidential"], {
+    message: "用户安全级别不合法",
+  })
+  securityLevel!: SecurityLevel;
 }
 
 export class UpdateProfileDto implements UpdateProfileRequest {

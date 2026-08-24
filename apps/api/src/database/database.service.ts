@@ -9,16 +9,21 @@ import type { OnModuleDestroy } from "@nestjs/common";
 import type {
   ActivityItem,
   AuditRecord,
+  AuthSession,
   AuthUser,
   BackupRecord,
   BackupTarget,
+  IntegrityInspection,
+  ResourceSecurityLabel,
   SecurityPolicy,
   UserRole,
+  SecurityLevel,
   VulnerabilityScanRecord,
 } from "@admin-x/shared";
 
 import {
   assertDataEncryptionKey,
+  createIntegrityMac,
   createSensitiveLookup,
   decryptSensitive,
   decryptSensitiveOptional,
@@ -88,6 +93,8 @@ const SCHEMA = `
     email_lookup TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('system-admin', 'security-admin', 'audit-admin', 'business-admin', 'operator', 'readonly')),
+    security_level TEXT NOT NULL DEFAULT 'internal' CHECK (security_level IN ('public', 'internal', 'secret', 'confidential')),
+    integrity_mac TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL CHECK (status IN ('active', 'invited', 'suspended')),
     avatar TEXT NOT NULL DEFAULT '',
     remark TEXT NOT NULL DEFAULT '',
@@ -154,10 +161,29 @@ const SCHEMA = `
     mfa_required_admin INTEGER NOT NULL DEFAULT 0,
     sensitive_action_reauth INTEGER NOT NULL DEFAULT 1,
     allowed_ip_ranges TEXT NOT NULL DEFAULT '[]',
+    integrity_mac TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
   );
 
   INSERT OR IGNORE INTO security_policy (id, updated_at) VALUES (1, CURRENT_TIMESTAMP);
+
+  CREATE TABLE IF NOT EXISTS resource_security_labels (
+    resource TEXT PRIMARY KEY,
+    label TEXT NOT NULL CHECK (label IN ('public', 'internal', 'secret', 'confidential')),
+    description TEXT NOT NULL DEFAULT '',
+    integrity_mac TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+  );
+
+  INSERT OR IGNORE INTO resource_security_labels (resource, label, description, integrity_mac, updated_at) VALUES
+    ('auth', 'internal', '登录、会话和身份鉴别接口', '', CURRENT_TIMESTAMP),
+    ('dashboard', 'internal', '工作台和分析概览', '', CURRENT_TIMESTAMP),
+    ('user-directory', 'internal', '用户目录和账号基本资料', '', CURRENT_TIMESTAMP),
+    ('business', 'secret', '业务数据和业务操作', '', CURRENT_TIMESTAMP),
+    ('compliance', 'secret', '备份、恢复和合规证据', '', CURRENT_TIMESTAMP),
+    ('security', 'confidential', '安全策略、授权和安全配置', '', CURRENT_TIMESTAMP),
+    ('audit', 'confidential', '审计记录、审计导出和审计分析', '', CURRENT_TIMESTAMP),
+    ('privacy', 'internal', '个人信息导出、注销和隐私操作', '', CURRENT_TIMESTAMP);
 
   CREATE TABLE IF NOT EXISTS email_mfa_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -194,10 +220,21 @@ const SCHEMA = `
     created_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    revoked_at TEXT
+    revoked_at TEXT,
+    ip_address TEXT,
+    user_agent TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS request_nonces (
+    nonce TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_request_nonces_expires_at ON request_nonces(expires_at);
 
   CREATE TABLE IF NOT EXISTS backup_records (
     id TEXT PRIMARY KEY,
@@ -261,6 +298,8 @@ export class DatabaseService implements OnModuleDestroy {
       ["avatar", "TEXT NOT NULL DEFAULT ''"],
       ["remark", "TEXT NOT NULL DEFAULT ''"],
       ["email_lookup", "TEXT NOT NULL DEFAULT ''"],
+      ["security_level", "TEXT NOT NULL DEFAULT 'internal'"],
+      ["integrity_mac", "TEXT NOT NULL DEFAULT ''"],
       ["data_scope", "TEXT NOT NULL DEFAULT 'assigned'"],
       ["data_scope_ids", "TEXT NOT NULL DEFAULT '[]'"],
       ["mfa_enabled", "INTEGER NOT NULL DEFAULT 0"],
@@ -280,6 +319,20 @@ export class DatabaseService implements OnModuleDestroy {
       } catch {
         // The column already exists on a current database.
       }
+    }
+    try {
+      this.connection.exec(
+        "ALTER TABLE security_policy ADD COLUMN integrity_mac TEXT NOT NULL DEFAULT ''",
+      );
+    } catch {
+      // The column already exists on a current database.
+    }
+    try {
+      this.connection.exec(
+        "ALTER TABLE resource_security_labels ADD COLUMN integrity_mac TEXT NOT NULL DEFAULT ''",
+      );
+    } catch {
+      // The column already exists on a current database.
     }
     for (const [name, definition] of [
       ["verified_at", "TEXT"],
@@ -315,6 +368,16 @@ export class DatabaseService implements OnModuleDestroy {
         // The column already exists on a current database.
       }
     }
+    for (const [name, definition] of [
+      ["ip_address", "TEXT"],
+      ["user_agent", "TEXT"],
+    ] as const) {
+      try {
+        this.connection.exec(`ALTER TABLE auth_sessions ADD COLUMN ${name} ${definition}`);
+      } catch {
+        // The column already exists on a current database.
+      }
+    }
     // Encrypt legacy values before creating the append-only audit triggers;
     // the migration must be allowed to update existing audit rows once.
     this.connection.exec(
@@ -340,6 +403,13 @@ export class DatabaseService implements OnModuleDestroy {
        SET data_scope = 'all'
        WHERE role IN ('system-admin', 'security-admin', 'audit-admin', 'business-admin')
          AND data_scope = 'assigned';
+       UPDATE users
+       SET security_level = CASE
+         WHEN role IN ('system-admin', 'security-admin', 'audit-admin') THEN 'confidential'
+         WHEN role = 'business-admin' THEN 'secret'
+         ELSE 'internal'
+       END
+       WHERE security_level IS NULL OR security_level = '';
        UPDATE users SET password_changed_at = created_at WHERE password_changed_at = '';
        UPDATE users
        SET privacy_notice_accepted_at = '', privacy_notice_version = '',
@@ -347,9 +417,126 @@ export class DatabaseService implements OnModuleDestroy {
        WHERE privacy_notice_version = '' OR privacy_notice_summary = '';
        UPDATE security_policy SET lockout_minutes = 30 WHERE lockout_minutes < 30;`,
     );
+    this.backfillIntegrityMacs();
     this.connection.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lookup ON users(email_lookup)",
     );
+  }
+
+  private backfillIntegrityMacs(): void {
+    const users = this.connection
+      .prepare(
+        `SELECT id, username, password_hash, role, security_level, status,
+                data_scope, data_scope_ids, mfa_enabled, mfa_secret
+         FROM users`,
+      )
+      .all() as SqlRow[];
+    const updateUser = this.connection.prepare("UPDATE users SET integrity_mac = ? WHERE id = ?");
+    for (const row of users) {
+      updateUser.run(createUserIntegrityMac(row), String(row.id));
+    }
+
+    const policy = this.connection
+      .prepare(
+        `SELECT password_min_length, password_max_age_days, login_failure_limit,
+                lockout_minutes, session_timeout_minutes, concurrent_session_limit,
+                mfa_required_admin, sensitive_action_reauth, allowed_ip_ranges
+         FROM security_policy WHERE id = 1`,
+      )
+      .get() as SqlRow | undefined;
+    if (policy) {
+      this.connection
+        .prepare("UPDATE security_policy SET integrity_mac = ? WHERE id = 1")
+        .run(createSecurityPolicyIntegrityMac(policy));
+    }
+
+    const labels = this.connection
+      .prepare("SELECT resource, label, description, updated_at FROM resource_security_labels")
+      .all() as SqlRow[];
+    const updateLabel = this.connection.prepare(
+      "UPDATE resource_security_labels SET integrity_mac = ? WHERE resource = ?",
+    );
+    for (const row of labels) {
+      updateLabel.run(createResourceSecurityLabelMac(row), String(row.resource));
+    }
+  }
+
+  refreshUserIntegrityMac(id: string): void {
+    const row = this.connection
+      .prepare(
+        `SELECT id, username, password_hash, role, security_level, status,
+                data_scope, data_scope_ids, mfa_enabled, mfa_secret
+         FROM users WHERE id = ?`,
+      )
+      .get(id) as SqlRow | undefined;
+    if (row) {
+      this.connection
+        .prepare("UPDATE users SET integrity_mac = ? WHERE id = ?")
+        .run(createUserIntegrityMac(row), id);
+    }
+  }
+
+  verifyUserIntegrity(id: string): boolean {
+    const row = this.connection
+      .prepare(
+        `SELECT id, username, password_hash, role, security_level, status,
+                data_scope, data_scope_ids, mfa_enabled, mfa_secret, integrity_mac
+         FROM users WHERE id = ?`,
+      )
+      .get(id) as SqlRow | undefined;
+    return Boolean(row?.integrity_mac && row && row.integrity_mac === createUserIntegrityMac(row));
+  }
+
+  refreshSecurityPolicyIntegrity(): void {
+    const row = this.connection
+      .prepare(
+        `SELECT password_min_length, password_max_age_days, login_failure_limit,
+                lockout_minutes, session_timeout_minutes, concurrent_session_limit,
+                mfa_required_admin, sensitive_action_reauth, allowed_ip_ranges
+         FROM security_policy WHERE id = 1`,
+      )
+      .get() as SqlRow | undefined;
+    if (row) {
+      this.connection
+        .prepare("UPDATE security_policy SET integrity_mac = ? WHERE id = 1")
+        .run(createSecurityPolicyIntegrityMac(row));
+    }
+  }
+
+  verifySecurityPolicyIntegrity(): boolean {
+    const row = this.connection
+      .prepare(
+        `SELECT password_min_length, password_max_age_days, login_failure_limit,
+                lockout_minutes, session_timeout_minutes, concurrent_session_limit,
+                mfa_required_admin, sensitive_action_reauth, allowed_ip_ranges, integrity_mac
+         FROM security_policy WHERE id = 1`,
+      )
+      .get() as SqlRow | undefined;
+    return Boolean(
+      row?.integrity_mac && row && row.integrity_mac === createSecurityPolicyIntegrityMac(row),
+    );
+  }
+
+  inspectIntegrity(): IntegrityInspection {
+    const rows = this.connection.prepare("SELECT id FROM users").all() as Array<{ id?: string }>;
+    const failedUsers = rows.filter((row) => !row.id || !this.verifyUserIntegrity(row.id)).length;
+    const labels = this.connection
+      .prepare(
+        "SELECT resource, label, description, integrity_mac, updated_at FROM resource_security_labels",
+      )
+      .all() as SqlRow[];
+    const failedLabels = labels.filter(
+      (row) => !row.integrity_mac || row.integrity_mac !== createResourceSecurityLabelMac(row),
+    ).length;
+    return {
+      checkedAt: new Date().toISOString(),
+      resourceLabels: { checked: labels.length, failed: failedLabels },
+      securityPolicy: {
+        checked: 1,
+        failed: this.verifySecurityPolicyIntegrity() ? 0 : 1,
+      },
+      users: { checked: rows.length, failed: failedUsers },
+    };
   }
 
   private migrateSensitiveStorage(): void {
@@ -448,6 +635,7 @@ export class DatabaseService implements OnModuleDestroy {
           email_lookup TEXT NOT NULL DEFAULT '',
           password_hash TEXT NOT NULL,
           role TEXT NOT NULL CHECK (role IN ('system-admin', 'security-admin', 'audit-admin', 'business-admin', 'operator', 'readonly')),
+          security_level TEXT NOT NULL DEFAULT 'internal' CHECK (security_level IN ('public', 'internal', 'secret', 'confidential')),
           status TEXT NOT NULL CHECK (status IN ('active', 'invited', 'suspended')),
           avatar TEXT NOT NULL DEFAULT '',
           remark TEXT NOT NULL DEFAULT '',
@@ -923,6 +1111,9 @@ export class DatabaseService implements OnModuleDestroy {
          FROM security_policy WHERE id = 1`,
       )
       .get() as SqlRow | undefined;
+    if (!row || !this.verifySecurityPolicyIntegrity()) {
+      throw new Error("安全策略完整性校验失败");
+    }
     return {
       allowedIpRanges: parseStringArray(row?.allowed_ip_ranges),
       concurrentSessionLimit: toNumber(row?.concurrent_session_limit) || 1,
@@ -958,6 +1149,81 @@ export class DatabaseService implements OnModuleDestroy {
         JSON.stringify(policy.allowedIpRanges),
         new Date().toISOString(),
       );
+    this.refreshSecurityPolicyIntegrity();
+  }
+
+  listResourceSecurityLabels(): ResourceSecurityLabel[] {
+    const rows = this.connection
+      .prepare(
+        `SELECT resource, label, description, integrity_mac, updated_at
+         FROM resource_security_labels ORDER BY resource ASC`,
+      )
+      .all() as SqlRow[];
+    return rows.map((row) => {
+      if (!row.integrity_mac || row.integrity_mac !== createResourceSecurityLabelMac(row)) {
+        throw new Error("资源安全标记完整性校验失败");
+      }
+      return {
+        description: String(row.description ?? ""),
+        label: normalizeSecurityLevel(row.label),
+        resource: String(row.resource),
+        updatedAt: String(row.updated_at),
+      };
+    });
+  }
+
+  getResourceSecurityLevel(resource: string): SecurityLevel {
+    const row = this.connection
+      .prepare(
+        "SELECT resource, label, description, integrity_mac, updated_at FROM resource_security_labels WHERE resource = ?",
+      )
+      .get(resource) as SqlRow | undefined;
+    if (row && (!row.integrity_mac || row.integrity_mac !== createResourceSecurityLabelMac(row))) {
+      throw new Error("资源安全标记完整性校验失败");
+    }
+    return normalizeSecurityLevel(row?.label);
+  }
+
+  updateResourceSecurityLabel(resource: string, label: SecurityLevel): ResourceSecurityLabel {
+    const updatedAt = new Date().toISOString();
+    const current = this.connection
+      .prepare("SELECT description FROM resource_security_labels WHERE resource = ?")
+      .get(resource) as SqlRow | undefined;
+    if (!current) {
+      throw new Error("资源安全标记不存在");
+    }
+    this.connection
+      .prepare(
+        `UPDATE resource_security_labels
+         SET label = ?, integrity_mac = ?, updated_at = ?
+         WHERE resource = ?`,
+      )
+      .run(
+        label,
+        createResourceSecurityLabelMac({
+          description: String(current.description ?? ""),
+          label,
+          resource,
+          updated_at: updatedAt,
+        }),
+        updatedAt,
+        resource,
+      );
+    const updated = this.connection
+      .prepare(
+        `SELECT resource, label, description, integrity_mac, updated_at
+         FROM resource_security_labels WHERE resource = ?`,
+      )
+      .get(resource) as SqlRow | undefined;
+    if (!updated) {
+      throw new Error("资源安全标记不存在");
+    }
+    return {
+      description: String(updated.description ?? ""),
+      label: normalizeSecurityLevel(updated.label),
+      resource: String(updated.resource),
+      updatedAt: String(updated.updated_at),
+    };
   }
 
   getEmailMfaConfig(): StoredEmailMfaConfig {
@@ -1084,7 +1350,13 @@ export class DatabaseService implements OnModuleDestroy {
       .run(new Date().toISOString(), id);
   }
 
-  createSession(userId: string, sessionId: string, expiresAt: string, limit: number): void {
+  createSession(
+    userId: string,
+    sessionId: string,
+    expiresAt: string,
+    limit: number,
+    context?: AuditContext,
+  ): void {
     const now = new Date().toISOString();
     this.connection
       .prepare(
@@ -1108,10 +1380,65 @@ export class DatabaseService implements OnModuleDestroy {
     }
     this.connection
       .prepare(
-        `INSERT INTO auth_sessions (id, user_id, created_at, last_seen_at, expires_at, revoked_at)
-         VALUES (?, ?, ?, ?, ?, NULL)`,
+        `INSERT INTO auth_sessions
+          (id, user_id, created_at, last_seen_at, expires_at, revoked_at, ip_address, user_agent)
+         VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
       )
-      .run(sessionId, userId, now, now, expiresAt);
+      .run(
+        sessionId,
+        userId,
+        now,
+        now,
+        expiresAt,
+        encryptStoredNullableValue(context?.ipAddress),
+        encryptStoredNullableValue(context?.userAgent),
+      );
+  }
+
+  listActiveSessions(userId: string, currentSessionId?: string): AuthSession[] {
+    const now = new Date().toISOString();
+    const rows = this.connection
+      .prepare(
+        `SELECT id, created_at, last_seen_at, expires_at, ip_address, user_agent
+         FROM auth_sessions
+         WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
+         ORDER BY last_seen_at DESC, created_at DESC`,
+      )
+      .all(userId, now) as SqlRow[];
+    return rows.map((row) => ({
+      createdAt: String(row.created_at),
+      current: String(row.id) === currentSessionId,
+      expiresAt: String(row.expires_at),
+      id: String(row.id),
+      ipAddress: decryptSensitiveOptional(row.ip_address),
+      lastSeenAt: String(row.last_seen_at),
+      userAgent: decryptSensitiveOptional(row.user_agent),
+    }));
+  }
+
+  revokeSession(userId: string, sessionId: string): boolean {
+    const result = this.connection
+      .prepare(
+        `UPDATE auth_sessions
+         SET revoked_at = ?
+         WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?`,
+      )
+      .run(new Date().toISOString(), sessionId, userId, new Date().toISOString()) as {
+      changes?: number | bigint;
+    };
+    return toNumber(result.changes) > 0;
+  }
+
+  consumeRequestNonce(sessionId: string, nonce: string, expiresAt: string): boolean {
+    const now = new Date().toISOString();
+    this.connection.prepare("DELETE FROM request_nonces WHERE expires_at <= ?").run(now);
+    const result = this.connection
+      .prepare(
+        `INSERT OR IGNORE INTO request_nonces (nonce, session_id, created_at, expires_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(nonce, sessionId, now, expiresAt) as { changes?: number | bigint };
+    return toNumber(result.changes) === 1;
   }
 
   isSessionActive(userId: string, sessionId: string, idleTimeoutSeconds?: number): boolean {
@@ -1179,6 +1506,50 @@ export function resolveDatabasePath(): string {
 
 function toNumber(value: unknown): number {
   return typeof value === "bigint" ? Number(value) : Number(value ?? 0);
+}
+
+function createUserIntegrityMac(row: SqlRow): string {
+  return createIntegrityMac(
+    JSON.stringify({
+      dataScope: String(row.data_scope ?? ""),
+      dataScopeIds: String(row.data_scope_ids ?? ""),
+      id: String(row.id ?? ""),
+      mfaEnabled: toNumber(row.mfa_enabled),
+      mfaSecret: String(row.mfa_secret ?? ""),
+      passwordHash: String(row.password_hash ?? ""),
+      role: String(row.role ?? ""),
+      securityLevel: String(row.security_level ?? "internal"),
+      status: String(row.status ?? ""),
+      username: String(row.username ?? ""),
+    }),
+  );
+}
+
+function createSecurityPolicyIntegrityMac(row: SqlRow): string {
+  return createIntegrityMac(
+    JSON.stringify({
+      allowedIpRanges: String(row.allowed_ip_ranges ?? ""),
+      concurrentSessionLimit: toNumber(row.concurrent_session_limit),
+      lockoutMinutes: toNumber(row.lockout_minutes),
+      loginFailureLimit: toNumber(row.login_failure_limit),
+      mfaRequiredAdmin: toNumber(row.mfa_required_admin),
+      passwordMaxAgeDays: toNumber(row.password_max_age_days),
+      passwordMinLength: toNumber(row.password_min_length),
+      sensitiveActionReauth: toNumber(row.sensitive_action_reauth),
+      sessionTimeoutMinutes: toNumber(row.session_timeout_minutes),
+    }),
+  );
+}
+
+function createResourceSecurityLabelMac(row: SqlRow): string {
+  return createIntegrityMac(
+    JSON.stringify({
+      description: String(row.description ?? ""),
+      label: String(row.label ?? "internal"),
+      resource: String(row.resource ?? ""),
+      updatedAt: String(row.updated_at ?? ""),
+    }),
+  );
 }
 
 function encryptStoredValue(value: unknown): string {
@@ -1296,6 +1667,10 @@ function toVulnerabilityScanRecord(row: SqlRow): VulnerabilityScanRecord {
 
 function defaultDataScopeForRole(role: UserRole): string {
   return role === "operator" || role === "readonly" ? "assigned" : "all";
+}
+
+function normalizeSecurityLevel(value: unknown): SecurityLevel {
+  return value === "public" || value === "secret" || value === "confidential" ? value : "internal";
 }
 
 function mapLegacyRole(value: unknown): UserRole {

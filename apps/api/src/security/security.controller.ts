@@ -1,9 +1,21 @@
-import { Body, Controller, Get, Inject, Patch, Post, Request, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  Request,
+  UseGuards,
+} from "@nestjs/common";
 
 import type {
   ApiResponse,
   EmailMfaPolicyStatus,
   EmailMfaSettings,
+  IntegrityInspection,
+  ResourceSecurityLabel,
   SecurityPolicy,
 } from "@admin-x/shared";
 import { createApiResponse } from "@admin-x/shared";
@@ -16,6 +28,7 @@ import { SensitiveActionGuard } from "../auth/sensitive-action.guard.js";
 import {
   UpdateEmailMfaPolicyDto,
   UpdateEmailMfaTransportDto,
+  UpdateResourceSecurityLabelDto,
   UpdateSecurityPolicyDto,
 } from "./security.dto.js";
 import { SecurityService } from "./security.service.js";
@@ -26,6 +39,34 @@ import { DtoValidationPipe } from "../validation/dto-validation.pipe.js";
 @RequirePermissions("security:manage")
 export class SecurityController {
   constructor(@Inject(SecurityService) private readonly securityService: SecurityService) {}
+
+  @Get("resource-labels")
+  resourceLabels(): ApiResponse<ResourceSecurityLabel[]> {
+    return createApiResponse(this.securityService.listResourceSecurityLabels());
+  }
+
+  @Get("integrity")
+  integrity(): ApiResponse<IntegrityInspection> {
+    return createApiResponse(this.securityService.inspectIntegrity());
+  }
+
+  @Patch("resource-labels/:resource")
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
+  updateResourceLabel(
+    @Param("resource") resource: string,
+    @Body(new DtoValidationPipe(UpdateResourceSecurityLabelDto))
+    body: UpdateResourceSecurityLabelDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<ResourceSecurityLabel> {
+    return createApiResponse(
+      this.securityService.updateResourceSecurityLabel(
+        resource,
+        body.label,
+        request.user,
+        getAuditContext(request),
+      ),
+    );
+  }
 
   @Get("policy")
   policy(): ApiResponse<SecurityPolicy> {

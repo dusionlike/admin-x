@@ -1,10 +1,13 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 
 import type {
   AuthUser,
   EmailMfaPolicyStatus,
   EmailMfaSettings,
+  IntegrityInspection,
+  ResourceSecurityLabel,
   SecurityPolicy,
+  SecurityLevel,
   UpdateEmailMfaTransportSettings,
 } from "@admin-x/shared";
 
@@ -101,6 +104,50 @@ export class SecurityService {
 
   testEmailMfa(actor: AuthUser, context?: AuditContext): Promise<{ maskedEmail: string }> {
     return this.emailMfaService.testDelivery(actor, context);
+  }
+
+  listResourceSecurityLabels(): ResourceSecurityLabel[] {
+    return this.database.listResourceSecurityLabels();
+  }
+
+  inspectIntegrity(): IntegrityInspection {
+    return this.database.inspectIntegrity();
+  }
+
+  updateResourceSecurityLabel(
+    resource: string,
+    label: SecurityLevel,
+    actor: AuthUser,
+    context?: AuditContext,
+  ): ResourceSecurityLabel {
+    const before = this.database
+      .listResourceSecurityLabels()
+      .find((item) => item.resource === resource);
+    if (!before) {
+      throw new NotFoundException("资源安全标记不存在");
+    }
+    if (!["public", "internal", "secret", "confidential"].includes(label)) {
+      throw new BadRequestException("资源安全标记不合法");
+    }
+    const updated = this.database.updateResourceSecurityLabel(resource, label);
+    this.database.addActivity({
+      action: "resource-security-label.update",
+      actor: {
+        displayName: actor.displayName,
+        id: actor.id,
+        role: actor.role,
+        username: actor.username,
+      },
+      after: updated,
+      before,
+      context,
+      description: `${actor.displayName}（@${actor.username}）将资源 ${resource} 的安全标记调整为「${label}」`,
+      title: "调整资源安全标记",
+      type: "update",
+      resource: "security-label",
+      targetId: resource,
+    });
+    return updated;
   }
 }
 

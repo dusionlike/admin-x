@@ -62,6 +62,32 @@ test("encrypts user personal fields at rest while preserving application search"
   database.onModuleDestroy();
 });
 
+test("verifies critical user and policy fields with MACs", () => {
+  const database = new DatabaseService(":memory:");
+  const service = new UsersService(database);
+  const admin = service.createAdmin({
+    displayName: "完整性管理员",
+    email: "integrity@example.com",
+    password: "IntegrityPass123!",
+    privacyNoticeAccepted: true,
+    username: "integrity-admin",
+  });
+
+  expect(database.verifyUserIntegrity(admin.id)).toBe(true);
+  database.connection.prepare("UPDATE users SET role = 'readonly' WHERE id = ?").run(admin.id);
+  expect(database.verifyUserIntegrity(admin.id)).toBe(false);
+  expect(() => service.get(admin.id)).toThrow("完整性校验失败");
+
+  const freshDatabase = new DatabaseService(":memory:");
+  freshDatabase.connection
+    .prepare("UPDATE security_policy SET password_min_length = 20 WHERE id = 1")
+    .run();
+  expect(freshDatabase.verifySecurityPolicyIntegrity()).toBe(false);
+  expect(() => freshDatabase.getSecurityPolicy()).toThrow("安全策略完整性校验失败");
+  database.onModuleDestroy();
+  freshDatabase.onModuleDestroy();
+});
+
 test("creates and updates a user", () => {
   const database = new DatabaseService(":memory:");
   const service = new UsersService(database);

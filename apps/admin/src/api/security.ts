@@ -1,14 +1,36 @@
 import type {
   EmailMfaPolicyStatus,
   EmailMfaSettings,
+  IntegrityInspection,
+  ResourceSecurityLabel,
   SecurityPolicy,
   UpdateEmailMfaPolicy,
   UpdateEmailMfaTransportSettings,
+  UpdateResourceSecurityLabelRequest,
 } from "@admin-x/shared";
 
 import { requestData } from "./http";
 
 export const securityApi = {
+  getIntegrityInspection() {
+    return requestData<IntegrityInspection>({
+      method: "GET",
+      url: "/security/integrity",
+    });
+  },
+  getResourceSecurityLabels() {
+    return requestData<ResourceSecurityLabel[]>({
+      method: "GET",
+      url: "/security/resource-labels",
+    });
+  },
+  updateResourceSecurityLabel(resource: string, payload: UpdateResourceSecurityLabelRequest) {
+    return requestData<ResourceSecurityLabel>({
+      data: payload,
+      method: "PATCH",
+      url: `/security/resource-labels/${resource}`,
+    });
+  },
   getPolicy() {
     return requestData<SecurityPolicy>({
       method: "GET",

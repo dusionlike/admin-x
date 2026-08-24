@@ -50,6 +50,33 @@ test("issues a database-backed session and revokes the older session when the li
   database.onModuleDestroy();
 });
 
+test("lists the current session and revokes a selected session", () => {
+  const { auth, database } = createAuth();
+  const context = { ipAddress: "127.0.0.1", requestId: "session-ledger-test" };
+  const setup = auth.setupAdmin(
+    {
+      displayName: "会话台账管理员",
+      email: "session-ledger@admin-x.dev",
+      password: "SessionLedger123!",
+      privacyNoticeAccepted: true,
+      username: "session-ledger-admin",
+    },
+    context,
+  );
+  const session = database.connection
+    .prepare("SELECT id FROM auth_sessions WHERE user_id = ?")
+    .get(setup.user.id) as { id?: string };
+
+  expect(session.id).toBeTruthy();
+  expect(auth.listSessions(setup.user.id, session.id)).toEqual([
+    expect.objectContaining({ current: true, ipAddress: "127.0.0.1" }),
+  ]);
+  auth.revokeSession(setup.user, session.id!, context);
+  expect(auth.listSessions(setup.user.id)).toEqual([]);
+  expect(() => auth.authenticate(setup.token, context)).toThrow("登录状态已失效");
+  database.onModuleDestroy();
+});
+
 test("supports an expired-password reminder and self-service recovery flow", () => {
   const { auth, database } = createAuth();
   const context = { ipAddress: "127.0.0.1", requestId: "expired-password-test" };

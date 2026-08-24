@@ -39,6 +39,7 @@ import {
   UpdateProfileDto,
   UpdateUserDataScopeDto,
   UpdateUserRoleDto,
+  UpdateUserSecurityLevelDto,
   UpdateUserStatusDto,
   UserListQueryDto,
 } from "./users.dto.js";
@@ -188,6 +189,19 @@ export class UsersController {
   ): ApiResponse<UserRecord> {
     return createApiResponse(
       this.usersService.updateDataScope(id, body, request.user, getAuditContext(request)),
+    );
+  }
+
+  @Patch(":id/security-level")
+  @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
+  @RequirePermissions("security:manage")
+  updateSecurityLevel(
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body(new DtoValidationPipe(UpdateUserSecurityLevelDto)) body: UpdateUserSecurityLevelDto,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<UserRecord> {
+    return createApiResponse(
+      this.usersService.updateSecurityLevel(id, body, request.user, getAuditContext(request)),
     );
   }
 

@@ -73,6 +73,10 @@ export function createSensitiveLookup(value: string): string {
   return createHmac("sha256", getDataEncryptionKey()).update(value, "utf8").digest("hex");
 }
 
+export function createIntegrityMac(value: string): string {
+  return createHmac("sha256", getDataEncryptionKey()).update(value, "utf8").digest("hex");
+}
+
 export function isSensitiveCiphertext(value: unknown): value is string {
   return typeof value === "string" && value.startsWith(`${CIPHERTEXT_VERSION}:`);
 }

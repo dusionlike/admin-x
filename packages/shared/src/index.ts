@@ -11,6 +11,32 @@ export type UserRole =
 export type MfaMethod = "totp" | "email";
 export type UserStatus = "active" | "invited" | "suspended";
 export type DataScopeType = "all" | "organization" | "department" | "project" | "assigned" | "self";
+export type SecurityLevel = "public" | "internal" | "secret" | "confidential";
+
+export const SECURITY_LEVELS: readonly SecurityLevel[] = [
+  "public",
+  "internal",
+  "secret",
+  "confidential",
+] as const;
+
+export function securityLevelRank(level: SecurityLevel): number {
+  return SECURITY_LEVELS.indexOf(level);
+}
+
+export function meetsSecurityLevel(subject: SecurityLevel, required: SecurityLevel): boolean {
+  return securityLevelRank(subject) >= securityLevelRank(required);
+}
+
+export function defaultSecurityLevelForRole(role: UserRole): SecurityLevel {
+  if (role === "system-admin" || role === "security-admin" || role === "audit-admin") {
+    return "confidential";
+  }
+  if (role === "business-admin") {
+    return "secret";
+  }
+  return "internal";
+}
 
 export interface DataScope {
   type: DataScopeType;
@@ -273,6 +299,7 @@ export interface AuthUser {
   username: string;
   displayName: string;
   role: UserRole;
+  securityLevel: SecurityLevel;
   dataScope: DataScope;
   mfaEnabled: boolean;
   privacyNoticeVersion?: string;
@@ -294,6 +321,16 @@ export interface LoginResponse {
   user: AuthUser;
   expiresIn: number;
   passwordStatus?: PasswordStatus;
+}
+
+export interface AuthSession {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  ipAddress?: string;
+  userAgent?: string;
+  current: boolean;
 }
 
 export interface ReauthenticationRequest {
@@ -385,6 +422,7 @@ export interface UserRecord {
   email: string;
   avatar?: string;
   role: UserRole;
+  securityLevel: SecurityLevel;
   status: UserStatus;
   dataScope: DataScope;
   mfaEnabled: boolean;
@@ -458,6 +496,28 @@ export interface AuditListQuery {
 
 export interface UpdateUserDataScopeRequest {
   dataScope: DataScope;
+}
+
+export interface UpdateUserSecurityLevelRequest {
+  securityLevel: SecurityLevel;
+}
+
+export interface ResourceSecurityLabel {
+  resource: string;
+  label: SecurityLevel;
+  description: string;
+  updatedAt: string;
+}
+
+export interface UpdateResourceSecurityLabelRequest {
+  label: SecurityLevel;
+}
+
+export interface IntegrityInspection {
+  checkedAt: string;
+  resourceLabels: { checked: number; failed: number };
+  users: { checked: number; failed: number };
+  securityPolicy: { checked: number; failed: number };
 }
 
 export interface SecurityPolicy {

@@ -9,9 +9,12 @@ import { clearReauthenticationToken, setReauthenticationToken } from "@/api/http
 
 const TOKEN_KEY = "admin-x:token";
 const USER_KEY = "admin-x:user";
+const LOGOUT_SYNC_KEY = "admin-x:logout-sync";
 
 export const useAuthStore = defineStore("auth", () => {
-  const token = ref(localStorage.getItem(TOKEN_KEY) ?? "");
+  clearLegacyPersistentCredentials();
+  const credentialStorage = getCredentialStorage();
+  const token = ref(credentialStorage?.getItem(TOKEN_KEY) ?? "");
   const user = ref<AuthUser | null>(readUser());
   const loginLoading = ref(false);
 
@@ -20,7 +23,7 @@ export const useAuthStore = defineStore("auth", () => {
     user.value ? hasPermission(user.value.role, permission) : false;
 
   function restore() {
-    token.value = localStorage.getItem(TOKEN_KEY) ?? "";
+    token.value = credentialStorage?.getItem(TOKEN_KEY) ?? "";
     user.value = readUser();
   }
 
@@ -40,8 +43,9 @@ export const useAuthStore = defineStore("auth", () => {
     clearReauthenticationToken();
     token.value = result.token;
     user.value = result.user;
-    localStorage.setItem(TOKEN_KEY, result.token);
-    localStorage.setItem(USER_KEY, JSON.stringify(result.user));
+    credentialStorage?.setItem(TOKEN_KEY, result.token);
+    credentialStorage?.setItem(USER_KEY, JSON.stringify(result.user));
+    clearLegacyPersistentCredentials();
   }
 
   async function reauthenticate(currentPassword: string) {
@@ -52,15 +56,26 @@ export const useAuthStore = defineStore("auth", () => {
 
   function updateUser(nextUser: AuthUser) {
     user.value = nextUser;
-    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+    credentialStorage?.setItem(USER_KEY, JSON.stringify(nextUser));
   }
 
-  function clearSession() {
+  function clearSession(broadcast = true) {
     clearReauthenticationToken();
     token.value = "";
     user.value = null;
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+    credentialStorage?.removeItem(TOKEN_KEY);
+    credentialStorage?.removeItem(USER_KEY);
+    if (broadcast) {
+      localStorage.setItem(LOGOUT_SYNC_KEY, String(Date.now()));
+    }
+  }
+
+  function getSessionRemainingSeconds(): number {
+    const expiry = readTokenExpiry(token.value);
+    if (!expiry) {
+      return 0;
+    }
+    return Math.max(0, Math.floor((expiry - Date.now()) / 1000));
   }
 
   async function logout() {
@@ -75,14 +90,16 @@ export const useAuthStore = defineStore("auth", () => {
 
   if (typeof window !== "undefined") {
     window.addEventListener("storage", (event) => {
-      if (event.key === TOKEN_KEY && !event.newValue) {
-        clearSession();
+      if (event.key === LOGOUT_SYNC_KEY) {
+        clearSession(false);
       }
     });
   }
 
   return {
     can,
+    clearSession,
+    getSessionRemainingSeconds,
     isAuthenticated,
     login,
     loginLoading,
@@ -97,7 +114,7 @@ export const useAuthStore = defineStore("auth", () => {
 });
 
 function readUser(): AuthUser | null {
-  const rawUser = localStorage.getItem(USER_KEY);
+  const rawUser = getCredentialStorage()?.getItem(USER_KEY);
   if (!rawUser) {
     return null;
   }
@@ -105,7 +122,33 @@ function readUser(): AuthUser | null {
   try {
     return JSON.parse(rawUser) as AuthUser;
   } catch {
-    localStorage.removeItem(USER_KEY);
+    getCredentialStorage()?.removeItem(USER_KEY);
+    return null;
+  }
+}
+
+function getCredentialStorage(): Storage | null {
+  return typeof window === "undefined" ? null : window.sessionStorage;
+}
+
+function clearLegacyPersistentCredentials() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+function readTokenExpiry(value: string): number | null {
+  const payload = value.split(".")[1];
+  if (!payload) {
+    return null;
+  }
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = JSON.parse(atob(normalized)) as { exp?: unknown };
+    return typeof decoded.exp === "number" ? decoded.exp * 1000 : null;
+  } catch {
     return null;
   }
 }

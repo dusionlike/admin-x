@@ -52,6 +52,7 @@ test("masks sensitive audit fields in API results and exports", () => {
       id: "actor-1",
       mfaEnabled: false,
       role: "audit-admin",
+      securityLevel: "confidential",
       username: "audit-admin",
     },
   );

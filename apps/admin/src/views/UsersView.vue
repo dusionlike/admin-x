@@ -7,6 +7,7 @@ import type {
   CreateUserRequest,
   DataScopeType,
   PageMeta,
+  SecurityLevel,
   UserListQuery,
   UserRole,
   UserStatus,
@@ -31,10 +32,12 @@ const loading = ref(false);
 const dialogVisible = ref(false);
 const roleDialogVisible = ref(false);
 const scopeDialogVisible = ref(false);
+const securityLevelDialogVisible = ref(false);
 const resetPasswordDialogVisible = ref(false);
 const formLoading = ref(false);
 const roleFormLoading = ref(false);
 const scopeFormLoading = ref(false);
+const securityLevelFormLoading = ref(false);
 const resetPasswordLoading = ref(false);
 const tableData = ref<UserRecord[]>([]);
 const formRef = ref<FormInstance>();
@@ -76,6 +79,15 @@ const scopeForm = reactive<{
   ids: "",
   type: "assigned",
 });
+const securityLevelForm = reactive<{
+  displayName: string;
+  id: string;
+  securityLevel: SecurityLevel;
+}>({
+  displayName: "",
+  id: "",
+  securityLevel: "internal",
+});
 const resetPasswordTarget = reactive({ displayName: "", id: "" });
 const resetPasswordForm = reactive<ResetPasswordForm>({
   confirmPassword: "",
@@ -94,6 +106,7 @@ const canAssignRoles = computed(
   () => authStore.can("role:assign") || canBootstrapSecurityAdmin.value,
 );
 const canManageDataScope = computed(() => authStore.can("security:manage"));
+const canManageSecurityLevel = computed(() => authStore.can("security:manage"));
 const availableRoleDefinitions = computed(() => {
   if (canBootstrapSecurityAdmin.value) {
     return ROLE_DEFINITIONS.filter((definition) => definition.code === "security-admin");
@@ -232,6 +245,15 @@ function dataScopeLabel(type: DataScopeType) {
   }[type];
 }
 
+function securityLevelLabel(level: SecurityLevel) {
+  return {
+    public: "公开",
+    internal: "内部",
+    secret: "秘密",
+    confidential: "机密",
+  }[level];
+}
+
 function resetForm() {
   form.displayName = "";
   form.email = "";
@@ -263,6 +285,13 @@ function openScopeDialog(row: UserRecord) {
   scopeDialogVisible.value = true;
 }
 
+function openSecurityLevelDialog(row: UserRecord) {
+  securityLevelForm.displayName = row.displayName;
+  securityLevelForm.id = row.id;
+  securityLevelForm.securityLevel = row.securityLevel;
+  securityLevelDialogVisible.value = true;
+}
+
 async function handleScopeUpdate() {
   if (!(await confirmSensitiveAction())) {
     return;
@@ -286,6 +315,26 @@ async function handleScopeUpdate() {
     ElMessage.error(getErrorMessage(error, "更新数据权限失败"));
   } finally {
     scopeFormLoading.value = false;
+  }
+}
+
+async function handleSecurityLevelUpdate() {
+  if (!(await confirmSensitiveAction())) {
+    return;
+  }
+  securityLevelFormLoading.value = true;
+  try {
+    const updated = await usersApi.updateSecurityLevel(securityLevelForm.id, {
+      securityLevel: securityLevelForm.securityLevel,
+    });
+    const index = tableData.value.findIndex((user) => user.id === updated.id);
+    if (index >= 0) tableData.value[index] = updated;
+    securityLevelDialogVisible.value = false;
+    ElMessage.success("用户安全级别已更新，旧会话已失效");
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, "更新用户安全级别失败"));
+  } finally {
+    securityLevelFormLoading.value = false;
   }
 }
 
@@ -532,6 +581,11 @@ void loadUsers();
             <el-tag size="small" effect="plain">{{ dataScopeLabel(row.dataScope.type) }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="安全级别" min-width="105">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ securityLevelLabel(row.securityLevel) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="MFA" width="80">
           <template #default="{ row }">
             <el-tag :type="row.mfaEnabled ? 'success' : 'info'" size="small" effect="plain">
@@ -541,10 +595,16 @@ void loadUsers();
         </el-table-column>
         <el-table-column label="最近活跃" min-width="150" prop="lastActiveAt" />
         <el-table-column
-          v-if="canManageStatus || canDeleteUsers || canAssignRoles || canManageDataScope"
+          v-if="
+            canManageStatus ||
+            canDeleteUsers ||
+            canAssignRoles ||
+            canManageDataScope ||
+            canManageSecurityLevel
+          "
           fixed="right"
           label="操作"
-          width="420"
+          width="500"
         >
           <template #default="{ row }">
             <div class="user-actions">
@@ -572,6 +632,14 @@ void loadUsers();
                 @click="openScopeDialog(row)"
               >
                 数据范围
+              </el-button>
+              <el-button
+                v-if="canManageSecurityLevel"
+                text
+                type="primary"
+                @click="openSecurityLevelDialog(row)"
+              >
+                安全级别
               </el-button>
               <el-button v-if="canDeleteUsers" text type="danger" @click="removeUser(row)">
                 删除
@@ -789,6 +857,39 @@ void loadUsers();
         <el-button @click="scopeDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="scopeFormLoading" @click="handleScopeUpdate">
           保存范围
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="securityLevelDialogVisible"
+      title="配置用户安全级别"
+      width="440px"
+      destroy-on-close
+    >
+      <p class="role-dialog-copy">
+        正在调整「{{
+          securityLevelForm.displayName
+        }}」的安全级别。服务端会在每次请求时将用户级别与资源安全标记进行强制比较。
+      </p>
+      <el-form label-position="top">
+        <el-form-item label="用户安全级别">
+          <el-select v-model="securityLevelForm.securityLevel" class="full-width">
+            <el-option label="公开" value="public" />
+            <el-option label="内部" value="internal" />
+            <el-option label="秘密" value="secret" />
+            <el-option label="机密" value="confidential" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="securityLevelDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="securityLevelFormLoading"
+          @click="handleSecurityLevelUpdate"
+        >
+          保存级别
         </el-button>
       </template>
     </el-dialog>

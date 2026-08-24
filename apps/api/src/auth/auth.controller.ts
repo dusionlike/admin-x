@@ -1,7 +1,19 @@
-import { Body, Controller, Get, Inject, Post, Request, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Request,
+  UseGuards,
+} from "@nestjs/common";
 
 import type {
   ApiResponse,
+  AuthSession,
   AuthUser,
   EmailMfaCodeResponse,
   LoginResponse,
@@ -93,6 +105,23 @@ export class AuthController {
   @UseGuards(AuthGuard)
   logout(@Request() request: AuthenticatedRequest): ApiResponse<null> {
     return createApiResponse(this.authService.logout(request.user, getAuditContext(request)));
+  }
+
+  @Get("sessions")
+  @UseGuards(AuthGuard)
+  sessions(@Request() request: AuthenticatedRequest): ApiResponse<AuthSession[]> {
+    return createApiResponse(this.authService.listSessions(request.user.id, request.sessionId));
+  }
+
+  @Delete("sessions/:id")
+  @UseGuards(AuthGuard)
+  revokeSession(
+    @Param("id", new ParseUUIDPipe()) sessionId: string,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<null> {
+    return createApiResponse(
+      this.authService.revokeSession(request.user, sessionId, getAuditContext(request)),
+    );
   }
 
   @Post("reauth")

@@ -37,7 +37,11 @@ export class ComplianceService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     this.runPrivacyRetentionCleanup();
-    this.retentionTimer = setInterval(() => this.runPrivacyRetentionCleanup(), 86_400_000);
+    this.database.inspectIntegrity();
+    this.retentionTimer = setInterval(() => {
+      this.runPrivacyRetentionCleanup();
+      this.database.inspectIntegrity();
+    }, 86_400_000);
     this.retentionTimer.unref?.();
   }
 

@@ -141,6 +141,14 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
     }),
   );
 
+  const unsignedMutation = await request("/auth/reauth", {
+    body: { currentPassword: systemPassword },
+    method: "POST",
+    sign: false,
+    token: systemToken,
+  });
+  assert.equal(unsignedMutation.status, 401);
+
   const securityCreate = await sensitiveRequest(systemToken, systemPassword, "/users", {
     body: {
       displayName: "安全管理员",
@@ -153,7 +161,10 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
     },
     method: "POST",
   });
-  assert.ok(securityCreate.status === 200 || securityCreate.status === 201);
+  assert.ok(
+    securityCreate.status === 200 || securityCreate.status === 201,
+    JSON.stringify(securityCreate.body),
+  );
 
   let securityToken = tokenFrom(
     await request("/auth/login", {
@@ -182,6 +193,12 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
       method: "POST",
     }),
   );
+  const resourceLabels = await authorizedRequest("/security/resource-labels", securityToken);
+  assert.equal(resourceLabels.status, 200);
+  assert.equal(
+    (resourceLabels.body.data as JsonObject[]).find((item) => item.resource === "audit")?.label,
+    "confidential",
+  );
 
   const operatorCreate = await sensitiveRequest(systemToken, systemPassword, "/users", {
     body: {
@@ -196,6 +213,14 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
     method: "POST",
   });
   const operatorId = stringFrom(operatorCreate, "id");
+  const securityLevelUpdate = await sensitiveRequest(
+    securityToken,
+    securityPassword,
+    `/users/${operatorId}/security-level`,
+    { body: { securityLevel: "secret" }, method: "PATCH" },
+  );
+  assert.equal(securityLevelUpdate.status, 200);
+  assert.equal((securityLevelUpdate.body.data as JsonObject).securityLevel, "secret");
   const auditRoleUpdate = await sensitiveRequest(
     securityToken,
     securityPassword,
@@ -488,6 +513,7 @@ interface RequestOptions {
   origin?: string;
   reauth?: string;
   secure?: boolean;
+  sign?: boolean;
   token?: string;
 }
 
@@ -502,10 +528,27 @@ async function request(path: string, options: RequestOptions = {}): Promise<ApiR
   if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
   if (options.reauth) headers.set("X-Admin-X-Reauth", options.reauth);
   if (options.body) headers.set("Content-Type", "application/json");
+  const method = (options.method ?? "GET").toUpperCase();
+  const bodyText = options.body ? JSON.stringify(options.body) : "";
+  if (
+    options.sign !== false &&
+    options.token &&
+    ["POST", "PUT", "PATCH", "DELETE"].includes(method)
+  ) {
+    const timestamp = String(Date.now());
+    const nonce = randomUUID().replace(/-/g, "");
+    const canonical = [method, path.split("?", 1)[0] || "/", timestamp, nonce, bodyText].join("\n");
+    headers.set("X-Admin-X-Timestamp", timestamp);
+    headers.set("X-Admin-X-Nonce", nonce);
+    headers.set(
+      "X-Admin-X-Signature",
+      createHmac("sha256", options.token).update(canonical, "utf8").digest("hex"),
+    );
+  }
   const response = await fetch(`${baseUrl}${path}`, {
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body: options.body ? bodyText : undefined,
     headers,
-    method: options.method ?? "GET",
+    method,
   });
   const text = await response.text();
   let body: JsonObject = {};

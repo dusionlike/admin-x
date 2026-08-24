@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsEmail,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -17,7 +18,15 @@ import type {
   SecurityPolicy,
   UpdateEmailMfaPolicy,
   UpdateEmailMfaTransportSettings,
+  UpdateResourceSecurityLabelRequest,
 } from "@admin-x/shared";
+
+export class UpdateResourceSecurityLabelDto implements UpdateResourceSecurityLabelRequest {
+  @IsEnum(["public", "internal", "secret", "confidential"], {
+    message: "资源安全标记不合法",
+  })
+  label!: UpdateResourceSecurityLabelRequest["label"];
+}
 
 export class UpdateSecurityPolicyDto implements SecurityPolicy {
   @IsArray({ message: "允许来源 IP 必须是数组" })

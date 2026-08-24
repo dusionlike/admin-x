@@ -515,9 +515,9 @@ export class DatabaseService implements OnModuleDestroy {
     const parameters: string[] = [];
     if (normalizedKeyword) {
       conditions.push(
-        "(lower(actor_name) LIKE ? OR lower(actor_username) LIKE ? OR lower(title) LIKE ? OR lower(description) LIKE ? OR lower(resource) LIKE ?)",
+        "(lower(action) LIKE ? OR lower(actor_name) LIKE ? OR lower(actor_username) LIKE ? OR lower(title) LIKE ? OR lower(description) LIKE ? OR lower(resource) LIKE ?)",
       );
-      parameters.push(...Array.from({ length: 5 }, () => `%${normalizedKeyword}%`));
+      parameters.push(...Array.from({ length: 6 }, () => `%${normalizedKeyword}%`));
     }
     if (result !== "all") {
       conditions.push("result = ?");
@@ -559,9 +559,9 @@ export class DatabaseService implements OnModuleDestroy {
     const parameters: string[] = [];
     if (normalizedKeyword) {
       conditions.push(
-        "(lower(actor_name) LIKE ? OR lower(actor_username) LIKE ? OR lower(title) LIKE ? OR lower(description) LIKE ? OR lower(resource) LIKE ?)",
+        "(lower(action) LIKE ? OR lower(actor_name) LIKE ? OR lower(actor_username) LIKE ? OR lower(title) LIKE ? OR lower(description) LIKE ? OR lower(resource) LIKE ?)",
       );
-      parameters.push(...Array.from({ length: 5 }, () => `%${normalizedKeyword}%`));
+      parameters.push(...Array.from({ length: 6 }, () => `%${normalizedKeyword}%`));
     }
     if (result !== "all") {
       conditions.push("result = ?");

@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -6,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -21,6 +23,7 @@ export class UpdateSecurityPolicyDto implements SecurityPolicy {
   @IsArray({ message: "允许来源 IP 必须是数组" })
   @IsString({ each: true, message: "允许来源 IP 必须是字符串" })
   @MaxLength(100, { each: true, message: "单个 IP 范围不能超过 100 个字符" })
+  @ArrayMaxSize(100, { message: "允许来源 IP 不能超过 100 条" })
   allowedIpRanges!: string[];
 
   @IsInt({ message: "并发会话数必须是整数" })
@@ -64,6 +67,7 @@ export class UpdateEmailMfaTransportDto implements UpdateEmailMfaTransportSettin
   @IsNotEmpty({ message: "SMTP 主机不能为空" })
   @IsString({ message: "SMTP 主机必须是字符串" })
   @MaxLength(255, { message: "SMTP 主机不能超过 255 个字符" })
+  @Matches(/^[^\r\n]+$/u, { message: "SMTP 主机不能包含换行" })
   smtpHost!: string;
 
   @IsInt({ message: "SMTP 端口必须是整数" })
@@ -76,6 +80,7 @@ export class UpdateEmailMfaTransportDto implements UpdateEmailMfaTransportSettin
 
   @IsString({ message: "SMTP 用户名必须是字符串" })
   @MaxLength(200, { message: "SMTP 用户名不能超过 200 个字符" })
+  @Matches(/^[^\r\n]*$/u, { message: "SMTP 用户名不能包含换行" })
   smtpUser!: string;
 
   @IsOptional()
@@ -89,6 +94,7 @@ export class UpdateEmailMfaTransportDto implements UpdateEmailMfaTransportSettin
   @IsNotEmpty({ message: "发件人名称不能为空" })
   @IsString({ message: "发件人名称必须是字符串" })
   @MaxLength(100, { message: "发件人名称不能超过 100 个字符" })
+  @Matches(/^[^\r\n]+$/u, { message: "发件人名称不能包含换行" })
   fromName!: string;
 }
 

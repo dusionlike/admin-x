@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  ParseUUIDPipe,
   Query,
   Request,
   UseGuards,
@@ -19,7 +20,6 @@ import type {
   PageResult,
   PersonalDataExport,
   PasswordStatus,
-  UserListQuery,
   UserRecord,
 } from "@admin-x/shared";
 import { createApiResponse } from "@admin-x/shared";
@@ -38,8 +38,10 @@ import {
   UpdateUserDataScopeDto,
   UpdateUserRoleDto,
   UpdateUserStatusDto,
+  UserListQueryDto,
 } from "./users.dto.js";
 import { UsersService } from "./users.service.js";
+import { DtoValidationPipe } from "../validation/dto-validation.pipe.js";
 
 @Controller("users")
 @UseGuards(AuthGuard)
@@ -49,7 +51,9 @@ export class UsersController {
   @Get()
   @UseGuards(AuthGuard, PermissionGuard)
   @RequirePermissions("user:read")
-  list(@Query() query: UserListQuery): ApiResponse<PageResult<UserRecord>> {
+  list(
+    @Query(new DtoValidationPipe(UserListQueryDto)) query: UserListQueryDto,
+  ): ApiResponse<PageResult<UserRecord>> {
     return createApiResponse(this.usersService.list(query));
   }
 
@@ -57,7 +61,7 @@ export class UsersController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("user:create")
   create(
-    @Body() body: CreateUserDto,
+    @Body(new DtoValidationPipe(CreateUserDto)) body: CreateUserDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<UserRecord> {
     return createApiResponse(
@@ -67,7 +71,7 @@ export class UsersController {
 
   @Patch("me")
   updateProfile(
-    @Body() body: UpdateProfileDto,
+    @Body(new DtoValidationPipe(UpdateProfileDto)) body: UpdateProfileDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<AuthUser> {
     return createApiResponse(
@@ -77,7 +81,9 @@ export class UsersController {
 
   @Get("me/privacy/export")
   exportPersonalData(@Request() request: AuthenticatedRequest): ApiResponse<PersonalDataExport> {
-    return createApiResponse(this.usersService.exportPersonalData(request.user.id));
+    return createApiResponse(
+      this.usersService.exportPersonalData(request.user.id, getAuditContext(request)),
+    );
   }
 
   @Get("me/password-status")
@@ -88,7 +94,7 @@ export class UsersController {
   @Post("me/privacy/erase")
   @UseGuards(AuthGuard, SensitiveActionGuard)
   erasePersonalData(
-    @Body() body: PrivacyEraseDto,
+    @Body(new DtoValidationPipe(PrivacyEraseDto)) body: PrivacyEraseDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<null> {
     return createApiResponse(
@@ -98,7 +104,7 @@ export class UsersController {
 
   @Patch("me/password")
   updatePassword(
-    @Body() body: UpdatePasswordDto,
+    @Body(new DtoValidationPipe(UpdatePasswordDto)) body: UpdatePasswordDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<null> {
     return createApiResponse(
@@ -110,8 +116,8 @@ export class UsersController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("user:status")
   resetPassword(
-    @Param("id") id: string,
-    @Body() body: ResetUserPasswordDto,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body(new DtoValidationPipe(ResetUserPasswordDto)) body: ResetUserPasswordDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<null> {
     return createApiResponse(
@@ -123,8 +129,8 @@ export class UsersController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("user:status")
   updateStatus(
-    @Param("id") id: string,
-    @Body() body: UpdateUserStatusDto,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body(new DtoValidationPipe(UpdateUserStatusDto)) body: UpdateUserStatusDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<UserRecord> {
     return createApiResponse(
@@ -136,7 +142,7 @@ export class UsersController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("user:status")
   unlock(
-    @Param("id") id: string,
+    @Param("id", new ParseUUIDPipe()) id: string,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<UserRecord> {
     return createApiResponse(this.usersService.unlock(id, request.user, getAuditContext(request)));
@@ -146,8 +152,8 @@ export class UsersController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("role:assign")
   updateRole(
-    @Param("id") id: string,
-    @Body() body: UpdateUserRoleDto,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body(new DtoValidationPipe(UpdateUserRoleDto)) body: UpdateUserRoleDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<UserRecord> {
     return createApiResponse(
@@ -159,8 +165,8 @@ export class UsersController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("security:manage")
   updateDataScope(
-    @Param("id") id: string,
-    @Body() body: UpdateUserDataScopeDto,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body(new DtoValidationPipe(UpdateUserDataScopeDto)) body: UpdateUserDataScopeDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<UserRecord> {
     return createApiResponse(
@@ -171,7 +177,10 @@ export class UsersController {
   @Delete(":id")
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("user:delete")
-  remove(@Param("id") id: string, @Request() request: AuthenticatedRequest): ApiResponse<null> {
+  remove(
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Request() request: AuthenticatedRequest,
+  ): ApiResponse<null> {
     return createApiResponse(this.usersService.remove(id, request.user, getAuditContext(request)));
   }
 }

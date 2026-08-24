@@ -160,7 +160,7 @@ export class ComplianceService {
         "入侵防范",
         "通信和人机输入必须进行有效性校验并设置 CSP",
         inputValidation && malwareScanMode !== "disabled",
-        "Nest ValidationPipe 开启 whitelist，SQL 使用参数化查询，前端输出编码，服务端启用 CSP；头像仅允许签名图片。",
+        "DTO 校验开启 whitelist/forbidNonWhitelisted，查询和 UUID 参数有范围校验，状态变更检查 Origin/Referer；SQL 使用参数化查询，前端输出编码，服务端启用 CSP，头像校验 MIME、大小和文件签名。",
       ),
       this.check(
         11,

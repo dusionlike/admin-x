@@ -27,6 +27,7 @@ import {
 } from "./auth.dto.js";
 import { AuthService } from "./auth.service.js";
 import { getAuditContext } from "./request-context.js";
+import { DtoValidationPipe } from "../validation/dto-validation.pipe.js";
 
 @Controller("auth")
 export class AuthController {
@@ -34,7 +35,7 @@ export class AuthController {
 
   @Post("login")
   login(
-    @Body() body: LoginDto,
+    @Body(new DtoValidationPipe(LoginDto)) body: LoginDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<LoginResponse> {
     return createApiResponse(this.authService.login(body, getAuditContext(request)));
@@ -47,7 +48,7 @@ export class AuthController {
 
   @Post("setup")
   setup(
-    @Body() body: SetupAdminDto,
+    @Body(new DtoValidationPipe(SetupAdminDto)) body: SetupAdminDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<LoginResponse> {
     return createApiResponse(this.authService.setupAdmin(body, getAuditContext(request)));
@@ -60,7 +61,7 @@ export class AuthController {
 
   @Post("mfa/email/request")
   async requestEmailMfaCode(
-    @Body() body: EmailMfaCodeRequestDto,
+    @Body(new DtoValidationPipe(EmailMfaCodeRequestDto)) body: EmailMfaCodeRequestDto,
     @Request() request: AuthenticatedRequest,
   ): Promise<ApiResponse<EmailMfaCodeResponse>> {
     return createApiResponse(
@@ -74,7 +75,7 @@ export class AuthController {
 
   @Post("password/expired")
   changeExpiredPassword(
-    @Body() body: ChangeExpiredPasswordDto,
+    @Body(new DtoValidationPipe(ChangeExpiredPasswordDto)) body: ChangeExpiredPasswordDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<null> {
     return createApiResponse(
@@ -97,7 +98,7 @@ export class AuthController {
   @Post("reauth")
   @UseGuards(AuthGuard)
   reauthenticate(
-    @Body() body: ReauthenticationDto,
+    @Body(new DtoValidationPipe(ReauthenticationDto)) body: ReauthenticationDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<ReauthenticationResponse> {
     return createApiResponse(
@@ -118,7 +119,7 @@ export class AuthController {
   @Post("mfa/setup")
   @UseGuards(AuthGuard)
   setupMfa(
-    @Body() body: MfaSetupDto,
+    @Body(new DtoValidationPipe(MfaSetupDto)) body: MfaSetupDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<MfaSetupResponse> {
     return createApiResponse(
@@ -129,7 +130,7 @@ export class AuthController {
   @Post("mfa/enable")
   @UseGuards(AuthGuard)
   enableMfa(
-    @Body() body: MfaCodeDto,
+    @Body(new DtoValidationPipe(MfaCodeDto)) body: MfaCodeDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<MfaStatus> {
     return createApiResponse(
@@ -140,7 +141,7 @@ export class AuthController {
   @Post("mfa/disable")
   @UseGuards(AuthGuard)
   disableMfa(
-    @Body() body: MfaDisableDto,
+    @Body(new DtoValidationPipe(MfaDisableDto)) body: MfaDisableDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<MfaStatus> {
     return createApiResponse(

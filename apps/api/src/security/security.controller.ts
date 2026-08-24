@@ -19,6 +19,7 @@ import {
   UpdateSecurityPolicyDto,
 } from "./security.dto.js";
 import { SecurityService } from "./security.service.js";
+import { DtoValidationPipe } from "../validation/dto-validation.pipe.js";
 
 @Controller("security")
 @UseGuards(AuthGuard, PermissionGuard)
@@ -34,7 +35,7 @@ export class SecurityController {
   @Patch("policy")
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   updatePolicy(
-    @Body() body: UpdateSecurityPolicyDto,
+    @Body(new DtoValidationPipe(UpdateSecurityPolicyDto)) body: UpdateSecurityPolicyDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<SecurityPolicy> {
     return createApiResponse(
@@ -53,7 +54,8 @@ export class SecurityController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("system:manage")
   async updateEmailMfaTransport(
-    @Body() body: UpdateEmailMfaTransportDto,
+    @Body(new DtoValidationPipe(UpdateEmailMfaTransportDto))
+    body: UpdateEmailMfaTransportDto,
     @Request() request: AuthenticatedRequest,
   ): Promise<ApiResponse<EmailMfaSettings>> {
     return createApiResponse(
@@ -85,7 +87,7 @@ export class SecurityController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("security:manage")
   async updateEmailMfaPolicy(
-    @Body() body: UpdateEmailMfaPolicyDto,
+    @Body(new DtoValidationPipe(UpdateEmailMfaPolicyDto)) body: UpdateEmailMfaPolicyDto,
     @Request() request: AuthenticatedRequest,
   ): Promise<ApiResponse<EmailMfaPolicyStatus>> {
     return createApiResponse(

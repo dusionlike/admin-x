@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Inject, Param, Post, Request, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Request,
+  UseGuards,
+} from "@nestjs/common";
 
 import type {
   ApiResponse,
@@ -17,6 +27,7 @@ import { getAuditContext } from "../auth/request-context.js";
 import { SensitiveActionGuard } from "../auth/sensitive-action.guard.js";
 import { ComplianceService } from "./compliance.service.js";
 import { CreateBackupDto, CreateVulnerabilityScanDto } from "./compliance.dto.js";
+import { DtoValidationPipe } from "../validation/dto-validation.pipe.js";
 
 @Controller("compliance")
 @UseGuards(AuthGuard, PermissionGuard)
@@ -38,7 +49,7 @@ export class ComplianceController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("backup:manage")
   async createBackup(
-    @Body() body: CreateBackupDto,
+    @Body(new DtoValidationPipe(CreateBackupDto)) body: CreateBackupDto,
     @Request() request: AuthenticatedRequest,
   ): Promise<ApiResponse<BackupRecord>> {
     return createApiResponse(
@@ -54,7 +65,7 @@ export class ComplianceController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("backup:manage")
   async verifyBackup(
-    @Param("id") id: string,
+    @Param("id", new ParseUUIDPipe()) id: string,
     @Request() request: AuthenticatedRequest,
   ): Promise<ApiResponse<BackupVerification>> {
     return createApiResponse(
@@ -71,7 +82,8 @@ export class ComplianceController {
   @UseGuards(AuthGuard, PermissionGuard, SensitiveActionGuard)
   @RequirePermissions("compliance:manage")
   scan(
-    @Body() body: CreateVulnerabilityScanDto,
+    @Body(new DtoValidationPipe(CreateVulnerabilityScanDto))
+    body: CreateVulnerabilityScanDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<VulnerabilityScanRecord> {
     return createApiResponse(

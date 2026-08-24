@@ -1,4 +1,13 @@
-import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
+import {
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from "class-validator";
 
 import type { BackupTarget } from "@admin-x/shared";
 
@@ -11,16 +20,19 @@ export class CreateVulnerabilityScanDto {
   @IsInt({ message: "严重漏洞数量必须是整数" })
   @IsOptional()
   @Min(0, { message: "严重漏洞数量不能为负数" })
+  @Max(100_000, { message: "严重漏洞数量超出范围" })
   criticalCount = 0;
 
   @IsInt({ message: "高危漏洞数量必须是整数" })
   @IsOptional()
   @Min(0, { message: "高危漏洞数量不能为负数" })
+  @Max(100_000, { message: "高危漏洞数量超出范围" })
   highCount = 0;
 
   @IsInt({ message: "中危漏洞数量必须是整数" })
   @IsOptional()
   @Min(0, { message: "中危漏洞数量不能为负数" })
+  @Max(100_000, { message: "中危漏洞数量超出范围" })
   mediumCount = 0;
 
   @IsInt({ message: "低危漏洞数量必须是整数" })
@@ -36,6 +48,7 @@ export class CreateVulnerabilityScanDto {
 
   @IsOptional()
   @IsString({ message: "扫描器名称必须是字符串" })
+  @IsNotEmpty({ message: "扫描器名称不能为空" })
   @MaxLength(100, { message: "扫描器名称不能超过 100 个字符" })
   scanner = "dependency-audit-gate";
 }

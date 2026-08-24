@@ -536,15 +536,28 @@ export class UsersService {
     };
   }
 
-  exportPersonalData(id: string): PersonalDataExport {
+  exportPersonalData(id: string, context?: AuditContext): PersonalDataExport {
     const row = this.findRowById(id);
     if (!row) {
       throw new NotFoundException("用户不存在");
     }
+    const user = toAuthUser(row);
+    const auditRecords = this.database.listAuditRecordsForActor(id);
+    const exportedAt = new Date().toISOString();
+    this.database.addActivity({
+      action: "privacy.export",
+      actor: toAuditActor(user),
+      context,
+      description: `${user.displayName}（@${user.username}）导出了个人资料和审计记录`,
+      title: "导出个人数据",
+      type: "system",
+      resource: "privacy",
+      targetId: id,
+    });
     return {
-      auditRecords: this.database.listAuditRecordsForActor(id),
-      exportedAt: new Date().toISOString(),
-      user: toAuthUser(row),
+      auditRecords,
+      exportedAt,
+      user,
     };
   }
 
@@ -999,17 +1012,25 @@ function normalizeAvatar(value: unknown): string {
   if (typeof value !== "string" || value.length > 500_000) {
     throw new BadRequestException("头像文件过大");
   }
-  if (!/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) {
+  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/u.exec(value);
+  if (!match) {
     throw new BadRequestException("头像格式不正确");
   }
-  const encoded = value.slice(value.indexOf(",") + 1);
+  const [, mime = "", encoded = ""] = match;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(encoded) || encoded.length % 4 === 1) {
+    throw new BadRequestException("头像编码不正确");
+  }
   const bytes = Buffer.from(encoded, "base64");
   const hasPngSignature = bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"));
   const hasJpegSignature = bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
   const hasWebpSignature =
     bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
     bytes.subarray(8, 12).toString("ascii") === "WEBP";
-  if (!hasPngSignature && !hasJpegSignature && !hasWebpSignature) {
+  const signatureMatchesMime =
+    (mime === "png" && hasPngSignature) ||
+    (mime === "jpeg" && hasJpegSignature) ||
+    (mime === "webp" && hasWebpSignature);
+  if (!signatureMatchesMime) {
     throw new BadRequestException("头像内容未通过文件签名校验");
   }
   return value;

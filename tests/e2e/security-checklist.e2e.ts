@@ -13,6 +13,7 @@ type ApiResult = { body: JsonObject; headers: Headers; status: number };
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const apiDir = join(rootDir, "apps", "api");
 const port = 3307;
+const appOrigin = `http://127.0.0.1:${port}`;
 const baseUrl = `http://127.0.0.1:${port}/api`;
 const systemPassword = "SystemAdminPass123!";
 const securityPassword = "SecurityAdminPass123!";
@@ -90,7 +91,7 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   const setup = await request("/auth/setup", {
     body: {
       displayName: "系统管理员",
-      email: "system-admin@admin-x.e2e",
+      email: "system-admin@admin-x.example",
       password: systemPassword,
       privacyNoticeAccepted: true,
       username: "system-owner",
@@ -99,6 +100,24 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   });
   assert.ok(setup.status === 200 || setup.status === 201, JSON.stringify(setup.body));
   let systemToken = tokenFrom(setup);
+
+  const unknownInput = await request("/auth/login", {
+    body: {
+      password: systemPassword,
+      unexpectedField: true,
+      username: "system-owner",
+    },
+    method: "POST",
+  });
+  assert.equal(unknownInput.status, 400);
+  const invalidUserQuery = await authorizedRequest("/users?page=not-a-number", systemToken);
+  assert.equal(invalidUserQuery.status, 400);
+  const invalidOrigin = await request("/auth/login", {
+    body: { password: systemPassword, username: "system-owner" },
+    method: "POST",
+    origin: "https://malicious.example",
+  });
+  assert.equal(invalidOrigin.status, 403);
 
   const systemMfaSetup = await request("/auth/mfa/setup", {
     body: { currentPassword: systemPassword },
@@ -125,7 +144,7 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   const securityCreate = await sensitiveRequest(systemToken, systemPassword, "/users", {
     body: {
       displayName: "安全管理员",
-      email: "security-admin@admin-x.e2e",
+      email: "security-admin@admin-x.example",
       password: securityPassword,
       privacyNoticeAccepted: true,
       role: "security-admin",
@@ -167,7 +186,7 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   const operatorCreate = await sensitiveRequest(systemToken, systemPassword, "/users", {
     body: {
       displayName: "审计管理员候选",
-      email: "audit-admin@admin-x.e2e",
+      email: "audit-admin@admin-x.example",
       password: auditPassword,
       privacyNoticeAccepted: true,
       role: "operator",
@@ -234,7 +253,7 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   const privacyCreate = await sensitiveRequest(systemToken, systemPassword, "/users", {
     body: {
       displayName: "隐私权利用户",
-      email: "privacy-owner@admin-x.e2e",
+      email: "privacy-owner@admin-x.example",
       password: operatorPassword,
       privacyNoticeAccepted: true,
       role: "operator",
@@ -248,7 +267,7 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   const duplicate = await sensitiveRequest(systemToken, systemPassword, "/users", {
     body: {
       displayName: "重复账号",
-      email: "duplicate@admin-x.e2e",
+      email: "duplicate@admin-x.example",
       password: operatorPassword,
       privacyNoticeAccepted: true,
       role: "operator",
@@ -262,7 +281,7 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   const weakPassword = await sensitiveRequest(systemToken, systemPassword, "/users", {
     body: {
       displayName: "弱密码账号",
-      email: "weak@admin-x.e2e",
+      email: "weak@admin-x.example",
       password: "password123",
       privacyNoticeAccepted: true,
       role: "operator",
@@ -381,7 +400,7 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   const maliciousAvatar = await request("/users/me", {
     body: {
       displayName: "系统管理员",
-      email: "system-admin@admin-x.e2e",
+      email: "system-admin@admin-x.example",
       avatar: "data:image/png;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
     },
     method: "PATCH",
@@ -408,9 +427,25 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   assert.equal(erase.status, 201);
   assert.equal((await authorizedRequest("/auth/me", operatorSession.token)).status, 401);
 
+  const privacyAudit = await authorizedRequest("/audit?keyword=privacy.export", auditToken);
+  assert.equal(privacyAudit.status, 200);
+  assert.ok(Number((privacyAudit.body.data as JsonObject).meta?.total ?? 0) > 0);
+
   const logout = await request("/auth/logout", { method: "POST", token: systemToken });
   assert.equal(logout.status, 201);
   assert.equal((await authorizedRequest("/auth/me", systemToken)).status, 401);
+
+  const requestAudit = await authorizedRequest("/audit?keyword=api.request", auditToken);
+  assert.equal(requestAudit.status, 200);
+  assert.ok(Number((requestAudit.body.data as JsonObject).meta?.total ?? 0) > 0);
+  const tokenFailureAudit = await authorizedRequest(
+    "/audit?keyword=auth.token.failure",
+    auditToken,
+  );
+  assert.equal(tokenFailureAudit.status, 200);
+  assert.ok(Number((tokenFailureAudit.body.data as JsonObject).meta?.total ?? 0) > 0);
+  const invalidAuditQuery = await authorizedRequest("/audit?page=not-a-number", auditToken);
+  assert.equal(invalidAuditQuery.status, 400);
 
   const finalOverview = await authorizedRequest("/compliance/overview", securityToken);
   assert.equal(finalOverview.status, 200);
@@ -450,6 +485,7 @@ async function authorizedRequest(path: string, token: string) {
 interface RequestOptions {
   body?: JsonObject;
   method?: string;
+  origin?: string;
   reauth?: string;
   secure?: boolean;
   token?: string;
@@ -458,6 +494,7 @@ interface RequestOptions {
 async function request(path: string, options: RequestOptions = {}): Promise<ApiResult> {
   const headers = new Headers({
     Accept: "application/json",
+    Origin: options.origin ?? appOrigin,
     "User-Agent": "admin-x-security-checklist-e2e",
     "X-Request-Id": randomUUID(),
   });

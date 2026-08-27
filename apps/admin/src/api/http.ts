@@ -5,7 +5,12 @@ import type { ApiResponse } from "@admin-x/shared";
 import { API_PREFIX, unwrapApiResponse } from "@admin-x/shared";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || API_PREFIX;
+const TOKEN_KEY = "admin-x:token";
+const USER_KEY = "admin-x:user";
+const LOGOUT_SYNC_KEY = "admin-x:logout-sync";
+export const SESSION_EXPIRED_KEY = "admin-x:session-expired";
 let reauthenticationToken = "";
+let sessionExpiryRedirecting = false;
 
 export function clearReauthenticationToken() {
   reauthenticationToken = "";
@@ -82,6 +87,9 @@ http.interceptors.response.use(
   (response) => response,
   (error: unknown) => {
     if (axios.isAxiosError(error)) {
+      if (error.response?.status === 401) {
+        redirectAfterSessionExpiry();
+      }
       const responseMessage = (error.response?.data as { message?: string | string[] } | undefined)
         ?.message;
       if (Array.isArray(responseMessage)) {
@@ -94,6 +102,29 @@ http.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+function redirectAfterSessionExpiry(): void {
+  if (typeof window === "undefined" || sessionExpiryRedirecting) {
+    return;
+  }
+  if (!sessionStorage.getItem(TOKEN_KEY)) {
+    return;
+  }
+
+  sessionExpiryRedirecting = true;
+  clearReauthenticationToken();
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(USER_KEY);
+  sessionStorage.setItem(SESSION_EXPIRED_KEY, "1");
+  localStorage.setItem(LOGOUT_SYNC_KEY, String(Date.now()));
+
+  const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  const loginUrl = new URL("/login", window.location.origin);
+  if (redirect !== "/login" && !redirect.startsWith("/login?")) {
+    loginUrl.searchParams.set("redirect", redirect);
+  }
+  window.location.assign(loginUrl.toString());
+}
 
 export async function requestData<T>(config: AxiosRequestConfig): Promise<T> {
   const response = await http.request<ApiResponse<T>>(config);

@@ -1,4 +1,5 @@
 import { HttpException, UnauthorizedException } from "@nestjs/common";
+import jwt from "jsonwebtoken";
 
 import { expect, test } from "vite-plus/test";
 
@@ -47,6 +48,52 @@ test("issues a database-backed session and revokes the older session when the li
   expect(
     database.connection.prepare("SELECT COUNT(*) AS count FROM auth_sessions").get(),
   ).toBeTruthy();
+  database.onModuleDestroy();
+});
+
+test("refreshes an active session expiry on each authenticated request", () => {
+  const { auth, database, users } = createAuth();
+  const context = { ipAddress: "127.0.0.1", requestId: "session-refresh-test" };
+  const setup = auth.setupAdmin(
+    {
+      displayName: "会话续期管理员",
+      email: "session-refresh@admin-x.dev",
+      password: "SessionRefresh123!",
+      privacyNoticeAccepted: true,
+      username: "session-refresh-admin",
+    },
+    context,
+  );
+  const session = database.connection
+    .prepare("SELECT id FROM auth_sessions WHERE user_id = ?")
+    .get(setup.user.id) as { id?: string };
+  if (!session.id) {
+    throw new Error("Expected an active session");
+  }
+  const sessionId = session.id;
+  const oldLastSeenAt = new Date(Date.now() - 60_000).toISOString();
+  const oldExpiresAt = new Date(Date.now() + 60_000).toISOString();
+  database.connection
+    .prepare("UPDATE auth_sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?")
+    .run(oldLastSeenAt, oldExpiresAt, sessionId);
+
+  const expiredJwt = jwt.sign(
+    {
+      mfaVerified: false,
+      role: setup.user.role,
+      sessionVersion: users.findAuthenticatedUser(setup.user.id)?.sessionVersion,
+      username: setup.user.username,
+    },
+    process.env.JWT_SECRET ?? "admin-x-development-secret",
+    { expiresIn: -1, jwtid: sessionId, subject: setup.user.id },
+  );
+  expect(auth.authenticate(expiredJwt, context).username).toBe("session-refresh-admin");
+
+  const refreshed = database.connection
+    .prepare("SELECT last_seen_at, expires_at FROM auth_sessions WHERE id = ?")
+    .get(sessionId) as { expires_at?: string; last_seen_at?: string };
+  expect(Date.parse(refreshed.last_seen_at ?? "")).toBeGreaterThan(Date.parse(oldLastSeenAt));
+  expect(Date.parse(refreshed.expires_at ?? "")).toBeGreaterThan(Date.parse(oldExpiresAt));
   database.onModuleDestroy();
 });
 

@@ -210,9 +210,9 @@ onMounted(() => {
             <span>对应规划文档附录的 18 项检查，状态由接口控制和运行证据共同计算。</span>
           </div>
           <el-radio-group v-model="filter" size="small">
-            <el-radio-button label="all">全部</el-radio-button>
-            <el-radio-button label="pass">已满足</el-radio-button>
-            <el-radio-button label="attention">待完善</el-radio-button>
+            <el-radio-button value="all">全部</el-radio-button>
+            <el-radio-button value="pass">已满足</el-radio-button>
+            <el-radio-button value="attention">待完善</el-radio-button>
           </el-radio-group>
         </div>
       </template>

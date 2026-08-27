@@ -8,11 +8,13 @@ import type { LoginRequest, SetupAdminRequest } from "@admin-x/shared";
 import {
   getAccountPasswordPolicyError,
   getErrorMessage,
+  PRIVACY_NOTICE_DETAILS,
   PRIVACY_NOTICE_SUMMARY,
   PRIVACY_NOTICE_VERSION,
 } from "@admin-x/shared";
 
 import { authApi } from "@/api/auth";
+import { SESSION_EXPIRED_KEY } from "@/api/http";
 import ThemeToggleButton from "@/components/ThemeToggleButton.vue";
 import { useAuthStore } from "@/stores/auth";
 
@@ -32,6 +34,7 @@ const emailCodeLoading = ref(false);
 const emailCodeHint = ref("");
 const expiredPasswordVisible = ref(false);
 const expiredPasswordLoading = ref(false);
+const privacyNoticeVisible = ref(false);
 const expiredPasswordFormRef = ref<FormInstance>();
 const form = reactive<LoginRequest>({
   mfaCode: "",
@@ -56,7 +59,18 @@ const loginRules: FormRules<LoginRequest> = {
     { message: "请输入密码", required: true, trigger: "blur" },
     { min: 6, message: "密码长度不能少于 6 位", trigger: "blur" },
   ],
-  mfaCode: [{ pattern: /^\d{6}$/, message: "MFA 验证码应为 6 位数字", trigger: "blur" }],
+  mfaCode: [
+    {
+      trigger: "blur",
+      validator: (_rule, value, callback) => {
+        if (!value) {
+          callback();
+          return;
+        }
+        callback(/^\d{6}$/.test(String(value)) ? undefined : new Error("MFA 验证码应为 6 位数字"));
+      },
+    },
+  ],
   username: [{ message: "请输入用户名", required: true, trigger: "blur" }],
 };
 
@@ -177,6 +191,11 @@ function clearSetupSecrets() {
   setupForm.confirmPassword = "";
 }
 
+function confirmPrivacyNoticeRead() {
+  setupForm.privacyNoticeAccepted = true;
+  privacyNoticeVisible.value = false;
+}
+
 async function handleLogin() {
   if (!formRef.value) {
     return;
@@ -193,7 +212,10 @@ async function handleLogin() {
   }
 
   try {
-    const result = await authStore.login(form);
+    const result = await authStore.login({
+      ...form,
+      mfaCode: form.mfaCode || undefined,
+    });
     clearLoginSecrets();
     await redirectToApp();
     ElMessage.success("欢迎回来，已进入 Admin X 管理后台");
@@ -289,6 +311,10 @@ async function handleSetup() {
 }
 
 onMounted(() => {
+  if (sessionStorage.getItem(SESSION_EXPIRED_KEY)) {
+    sessionStorage.removeItem(SESSION_EXPIRED_KEY);
+    ElMessage.warning("登录会话已过期，请重新登录");
+  }
   void loadSetupStatus();
   void loadMfaConfig();
 });
@@ -410,10 +436,15 @@ onMounted(() => {
             </el-input>
           </el-form-item>
           <el-form-item prop="privacyNoticeAccepted">
-            <el-checkbox v-model="setupForm.privacyNoticeAccepted">
-              我已阅读并同意个人信息保护告知（{{ PRIVACY_NOTICE_VERSION }}）。{{
-                PRIVACY_NOTICE_SUMMARY
-              }}
+            <el-checkbox v-model="setupForm.privacyNoticeAccepted" class="privacy-consent">
+              <span>我已阅读并同意</span>
+              <button
+                class="privacy-notice-link"
+                type="button"
+                @click.stop="privacyNoticeVisible = true"
+              >
+                《个人信息保护告知》
+              </button>
             </el-checkbox>
           </el-form-item>
           <el-button
@@ -513,6 +544,29 @@ onMounted(() => {
             </el-icon>
           </el-button>
         </el-form>
+
+        <el-dialog
+          v-model="privacyNoticeVisible"
+          class="privacy-notice-dialog"
+          title="个人信息保护告知"
+          width="min(680px, calc(100vw - 32px))"
+          append-to-body
+          modal-class="privacy-notice-overlay"
+          :lock-scroll="false"
+        >
+          <p class="privacy-notice-dialog__version">告知版本：{{ PRIVACY_NOTICE_VERSION }}</p>
+          <p class="privacy-notice-dialog__summary">{{ PRIVACY_NOTICE_SUMMARY }}</p>
+          <div class="privacy-notice-dialog__sections">
+            <section v-for="section in PRIVACY_NOTICE_DETAILS" :key="section.title">
+              <h3>{{ section.title }}</h3>
+              <p>{{ section.content }}</p>
+            </section>
+          </div>
+          <p class="privacy-notice-dialog__tip">请阅读后勾选“我已阅读并同意”，再创建管理员账号。</p>
+          <template #footer>
+            <el-button type="primary" @click="confirmPrivacyNoticeRead">我已阅读</el-button>
+          </template>
+        </el-dialog>
 
         <el-dialog
           v-model="expiredPasswordVisible"
@@ -778,6 +832,110 @@ onMounted(() => {
   color: #8b96a8;
   font-size: 11px;
   line-height: 1.6;
+}
+
+.privacy-consent {
+  align-items: flex-start;
+  white-space: normal;
+}
+
+.privacy-consent :deep(.el-checkbox__label) {
+  color: #8a95a8;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.privacy-notice-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  color: #6755e8;
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.privacy-notice-link:hover {
+  color: #5141d8;
+  text-decoration: underline;
+}
+
+:global(.privacy-notice-dialog) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+:global(.privacy-notice-dialog .el-dialog__header),
+:global(.privacy-notice-dialog .el-dialog__footer) {
+  flex: 0 0 auto;
+}
+
+:global(.privacy-notice-dialog .el-dialog__body) {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+:global(.privacy-notice-dialog__sections) {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+:global(.privacy-notice-dialog__sections section) {
+  margin: 0;
+}
+
+:global(.privacy-notice-dialog__sections h3) {
+  margin: 0 0 5px;
+  color: var(--ax-heading);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+:global(.privacy-notice-dialog__sections p),
+:global(.privacy-notice-dialog__version),
+:global(.privacy-notice-dialog__summary),
+:global(.privacy-notice-dialog__tip) {
+  margin: 0;
+  color: var(--ax-content);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+:global(.privacy-notice-dialog__version) {
+  color: var(--ax-muted);
+  font-size: 12px;
+}
+
+:global(.privacy-notice-dialog__summary) {
+  margin-top: 12px;
+}
+
+:global(.privacy-notice-dialog__tip) {
+  margin-top: 16px;
+  color: var(--ax-muted);
+  font-size: 12px;
+}
+
+:global(.privacy-notice-overlay .el-overlay-dialog) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: hidden;
+}
+
+html.dark .privacy-consent :deep(.el-checkbox__label) {
+  color: var(--ax-muted);
+}
+
+html.dark .privacy-notice-link {
+  color: var(--ax-primary);
 }
 
 .login-form :deep(.el-form-item__label) {

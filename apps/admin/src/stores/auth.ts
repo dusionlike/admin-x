@@ -70,14 +70,6 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
-  function getSessionRemainingSeconds(): number {
-    const expiry = readTokenExpiry(token.value);
-    if (!expiry) {
-      return 0;
-    }
-    return Math.max(0, Math.floor((expiry - Date.now()) / 1000));
-  }
-
   async function logout() {
     try {
       if (token.value) {
@@ -99,7 +91,6 @@ export const useAuthStore = defineStore("auth", () => {
   return {
     can,
     clearSession,
-    getSessionRemainingSeconds,
     isAuthenticated,
     login,
     loginLoading,
@@ -137,18 +128,4 @@ function clearLegacyPersistentCredentials() {
   }
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
-}
-
-function readTokenExpiry(value: string): number | null {
-  const payload = value.split(".")[1];
-  if (!payload) {
-    return null;
-  }
-  try {
-    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const decoded = JSON.parse(atob(normalized)) as { exp?: unknown };
-    return typeof decoded.exp === "number" ? decoded.exp * 1000 : null;
-  } catch {
-    return null;
-  }
 }

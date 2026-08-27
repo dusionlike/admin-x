@@ -1466,9 +1466,16 @@ export class DatabaseService implements OnModuleDestroy {
       }
       return false;
     }
-    this.connection
-      .prepare("UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?")
-      .run(now, sessionId);
+    if (idleTimeoutSeconds) {
+      const expiresAt = new Date(Date.now() + idleTimeoutSeconds * 1000).toISOString();
+      this.connection
+        .prepare("UPDATE auth_sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?")
+        .run(now, expiresAt, sessionId);
+    } else {
+      this.connection
+        .prepare("UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?")
+        .run(now, sessionId);
+    }
     return true;
   }
 

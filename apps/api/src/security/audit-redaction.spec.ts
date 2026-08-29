@@ -50,7 +50,6 @@ test("masks sensitive audit fields in API results and exports", () => {
       dataScope: { ids: [], type: "all" },
       email: "audit-admin@example.com",
       id: "actor-1",
-      mfaEnabled: false,
       role: "audit-admin",
       securityLevel: "confidential",
       username: "audit-admin",

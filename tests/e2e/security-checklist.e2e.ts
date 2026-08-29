@@ -119,28 +119,6 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   });
   assert.equal(invalidOrigin.status, 403);
 
-  const systemMfaSetup = await request("/auth/mfa/setup", {
-    body: { currentPassword: systemPassword },
-    method: "POST",
-    token: systemToken,
-  });
-  const systemSecret = stringFrom(systemMfaSetup, "secret");
-  await request("/auth/mfa/enable", {
-    body: { code: createTotp(systemSecret) },
-    method: "POST",
-    token: systemToken,
-  });
-  systemToken = tokenFrom(
-    await request("/auth/login", {
-      body: {
-        mfaCode: createTotp(systemSecret),
-        password: systemPassword,
-        username: "system-owner",
-      },
-      method: "POST",
-    }),
-  );
-
   const unsignedMutation = await request("/auth/reauth", {
     body: { currentPassword: systemPassword },
     method: "POST",
@@ -169,27 +147,6 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   let securityToken = tokenFrom(
     await request("/auth/login", {
       body: { password: securityPassword, username: "security-owner" },
-      method: "POST",
-    }),
-  );
-  const securityMfaSetup = await request("/auth/mfa/setup", {
-    body: { currentPassword: securityPassword },
-    method: "POST",
-    token: securityToken,
-  });
-  const securitySecret = stringFrom(securityMfaSetup, "secret");
-  await request("/auth/mfa/enable", {
-    body: { code: createTotp(securitySecret) },
-    method: "POST",
-    token: securityToken,
-  });
-  securityToken = tokenFrom(
-    await request("/auth/login", {
-      body: {
-        mfaCode: createTotp(securitySecret),
-        password: securityPassword,
-        username: "security-owner",
-      },
       method: "POST",
     }),
   );
@@ -249,31 +206,13 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
       method: "POST",
     }),
   );
-  const auditMfaSetup = await request("/auth/mfa/setup", {
-    body: { currentPassword: auditPassword },
-    method: "POST",
-    token: auditToken,
-  });
-  const auditSecret = stringFrom(auditMfaSetup, "secret");
-  await request("/auth/mfa/enable", {
-    body: { code: createTotp(auditSecret) },
-    method: "POST",
-    token: auditToken,
-  });
-  auditToken = tokenFrom(
-    await request("/auth/login", {
-      body: { mfaCode: createTotp(auditSecret), password: auditPassword, username: "audit-owner" },
-      method: "POST",
-    }),
-  );
-
   const policyBefore = await authorizedRequest("/security/policy", securityToken);
   const policy = policyBefore.body.data as JsonObject;
   const policyUpdate = await sensitiveRequest(securityToken, securityPassword, "/security/policy", {
     body: { ...policy, mfaRequiredForAdministrators: true, lockoutMinutes: 30 },
     method: "PATCH",
   });
-  assert.equal(policyUpdate.status, 200);
+  assert.equal(policyUpdate.status, 400);
 
   const privacyCreate = await sensitiveRequest(systemToken, systemPassword, "/users", {
     body: {
@@ -341,11 +280,7 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
 
   auditToken = tokenFrom(
     await request("/auth/login", {
-      body: {
-        mfaCode: createTotp(auditSecret),
-        password: auditPassword,
-        username: "audit-owner",
-      },
+      body: { password: auditPassword, username: "audit-owner" },
       method: "POST",
     }),
   );
@@ -518,6 +453,10 @@ interface RequestOptions {
 }
 
 async function request(path: string, options: RequestOptions = {}): Promise<ApiResult> {
+  const requestBody =
+    options.body && (path === "/auth/login" || path === "/auth/mfa/email/request")
+      ? await addCaptcha(options.body)
+      : options.body;
   const headers = new Headers({
     Accept: "application/json",
     Origin: options.origin ?? appOrigin,
@@ -527,9 +466,9 @@ async function request(path: string, options: RequestOptions = {}): Promise<ApiR
   if (options.secure !== false) headers.set("X-Forwarded-Proto", "https");
   if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
   if (options.reauth) headers.set("X-Admin-X-Reauth", options.reauth);
-  if (options.body) headers.set("Content-Type", "application/json");
+  if (requestBody) headers.set("Content-Type", "application/json");
   const method = (options.method ?? "GET").toUpperCase();
-  const bodyText = options.body ? JSON.stringify(options.body) : "";
+  const bodyText = requestBody ? JSON.stringify(requestBody) : "";
   if (
     options.sign !== false &&
     options.token &&
@@ -546,7 +485,7 @@ async function request(path: string, options: RequestOptions = {}): Promise<ApiR
     );
   }
   const response = await fetch(`${baseUrl}${path}`, {
-    body: options.body ? bodyText : undefined,
+    body: requestBody ? bodyText : undefined,
     headers,
     method,
   });
@@ -560,6 +499,25 @@ async function request(path: string, options: RequestOptions = {}): Promise<ApiR
     }
   }
   return { body, headers: response.headers, status: response.status };
+}
+
+async function addCaptcha(body: JsonObject): Promise<JsonObject> {
+  const captcha = await request("/auth/captcha");
+  assert.equal(captcha.status, 200, JSON.stringify(captcha.body));
+  const captchaData = captcha.body.data as JsonObject;
+  const image = String(captchaData.image ?? "");
+  const encodedImage = image.split(",", 2)[1] ?? "";
+  const svg = Buffer.from(encodedImage, "base64").toString("utf8");
+  const code = [...svg.matchAll(/<text[^>]*>([A-Z0-9])<\/text>/gu)]
+    .map((match) => match[1])
+    .join("");
+  assert.equal(typeof captchaData.id, "string", JSON.stringify(captcha.body));
+  assert.match(code, /^[A-Z0-9]{4}$/u);
+  return {
+    ...body,
+    captchaCode: code,
+    captchaId: String(captchaData.id),
+  };
 }
 
 async function waitForServer() {
@@ -586,30 +544,4 @@ function stringFrom(result: ApiResult, key: string): string {
   const data = result.body.data as JsonObject | undefined;
   assert.equal(typeof data?.[key], "string", JSON.stringify(result.body));
   return String(data?.[key]);
-}
-
-function createTotp(secret: string, timestamp = Date.now()): string {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  const bytes: number[] = [];
-  let bits = 0;
-  let bitCount = 0;
-  for (const character of secret) {
-    bits = (bits << 5) | alphabet.indexOf(character);
-    bitCount += 5;
-    if (bitCount >= 8) {
-      bitCount -= 8;
-      bytes.push((bits >> bitCount) & 0xff);
-    }
-  }
-  const counter = BigInt(Math.floor(timestamp / 1000 / 30));
-  const counterBuffer = Buffer.alloc(8);
-  counterBuffer.writeBigUInt64BE(counter);
-  const digest = createHmac("sha1", Buffer.from(bytes)).update(counterBuffer).digest();
-  const offset = digest[digest.length - 1]! & 0x0f;
-  const code =
-    ((digest[offset]! & 0x7f) << 24) |
-    ((digest[offset + 1]! & 0xff) << 16) |
-    ((digest[offset + 2]! & 0xff) << 8) |
-    (digest[offset + 3]! & 0xff);
-  return String(code % 1_000_000).padStart(6, "0");
 }

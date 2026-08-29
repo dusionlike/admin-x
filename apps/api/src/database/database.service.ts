@@ -320,6 +320,16 @@ export class DatabaseService implements OnModuleDestroy {
         // The column already exists on a current database.
       }
     }
+    this.connection.exec(
+      `UPDATE users
+       SET mfa_enabled = 0, mfa_secret = ''
+       WHERE mfa_enabled <> 0 OR mfa_secret <> '';
+       UPDATE security_policy
+       SET mfa_required_admin = 0
+       WHERE NOT EXISTS (
+         SELECT 1 FROM email_mfa_config WHERE id = 1 AND enabled = 1
+       );`,
+    );
     try {
       this.connection.exec(
         "ALTER TABLE security_policy ADD COLUMN integrity_mac TEXT NOT NULL DEFAULT ''",

@@ -109,7 +109,6 @@ void loadAudits();
   <div class="audit-page">
     <div class="page-heading">
       <div>
-        <p class="page-kicker">SECURITY AUDIT</p>
         <h1>安全审计</h1>
         <p class="page-description">只读查看系统关键操作；记录包含账号、时间、IP、结果和前后值。</p>
       </div>
@@ -264,14 +263,6 @@ void loadAudits();
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 26px;
-}
-
-.page-kicker {
-  margin: 0 0 8px;
-  color: var(--ax-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
 }
 
 .page-heading h1 {

@@ -17,12 +17,11 @@ import {
   getAccountPasswordPolicyError,
   getErrorMessage,
   getRoleDefinition,
-  PRIVACY_NOTICE_SUMMARY,
-  PRIVACY_NOTICE_VERSION,
   ROLE_DEFINITIONS,
 } from "@admin-x/shared";
 
 import { usersApi } from "@/api/users";
+import PrivacyNoticeDialog from "@/components/PrivacyNoticeDialog.vue";
 import { useAuthStore } from "@/stores/auth";
 
 type ResetPasswordForm = { confirmPassword: string; newPassword: string };
@@ -34,6 +33,7 @@ const roleDialogVisible = ref(false);
 const scopeDialogVisible = ref(false);
 const securityLevelDialogVisible = ref(false);
 const resetPasswordDialogVisible = ref(false);
+const privacyNoticeVisible = ref(false);
 const formLoading = ref(false);
 const roleFormLoading = ref(false);
 const scopeFormLoading = ref(false);
@@ -262,6 +262,10 @@ function resetForm() {
   form.role = "operator";
   form.status = "invited";
   form.username = "";
+}
+
+function confirmPrivacyNoticeRead() {
+  form.privacyNoticeAccepted = true;
 }
 
 function handleInitialRoleChange(role: UserRole) {
@@ -516,7 +520,6 @@ void loadUsers();
   <div class="users-page">
     <div class="page-heading users-heading">
       <div>
-        <p class="page-kicker">USERS</p>
         <h1>用户管理</h1>
         <p class="page-description">管理工作区成员、角色和访问状态。</p>
       </div>
@@ -584,13 +587,6 @@ void loadUsers();
         <el-table-column label="安全级别" min-width="105">
           <template #default="{ row }">
             <el-tag size="small" effect="plain">{{ securityLevelLabel(row.securityLevel) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="MFA" width="80">
-          <template #default="{ row }">
-            <el-tag :type="row.mfaEnabled ? 'success' : 'info'" size="small" effect="plain">
-              {{ row.mfaEnabled ? "已绑定" : "未绑定" }}
-            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="最近活跃" min-width="150" prop="lastActiveAt" />
@@ -703,10 +699,15 @@ void loadUsers();
           }}
         </p>
         <el-form-item prop="privacyNoticeAccepted">
-          <el-checkbox v-model="form.privacyNoticeAccepted">
-            已告知该成员采集目的，并确认个人信息保护告知（{{ PRIVACY_NOTICE_VERSION }}）。{{
-              PRIVACY_NOTICE_SUMMARY
-            }}
+          <el-checkbox v-model="form.privacyNoticeAccepted" class="privacy-consent">
+            <span>我已阅读并同意</span>
+            <button
+              class="privacy-notice-link"
+              type="button"
+              @click.stop="privacyNoticeVisible = true"
+            >
+              《个人信息保护告知》
+            </button>
           </el-checkbox>
         </el-form-item>
         <div class="form-grid">
@@ -743,6 +744,12 @@ void loadUsers();
         <el-button type="primary" :loading="formLoading" @click="handleCreate">确认创建</el-button>
       </template>
     </el-dialog>
+
+    <PrivacyNoticeDialog
+      v-model="privacyNoticeVisible"
+      action-label="创建用户账号"
+      @read="confirmPrivacyNoticeRead"
+    />
 
     <el-dialog v-model="roleDialogVisible" title="分配用户角色" width="440px" destroy-on-close>
       <p class="role-dialog-copy">
@@ -908,14 +915,6 @@ void loadUsers();
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 26px;
-}
-
-.page-kicker {
-  margin: 0 0 8px;
-  color: var(--ax-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
 }
 
 .page-heading h1 {
@@ -1096,6 +1095,41 @@ void loadUsers();
   color: var(--ax-muted);
   font-size: 12px;
   line-height: 1.7;
+}
+
+.privacy-consent {
+  align-items: flex-start;
+  white-space: normal;
+}
+
+.privacy-consent :deep(.el-checkbox__label) {
+  color: #8a95a8;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.privacy-notice-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  color: #6755e8;
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.privacy-notice-link:hover {
+  color: #5141d8;
+  text-decoration: underline;
+}
+
+html.dark .privacy-consent :deep(.el-checkbox__label) {
+  color: var(--ax-muted);
+}
+
+html.dark .privacy-notice-link {
+  color: var(--ax-primary);
 }
 
 @media (max-width: 700px) {

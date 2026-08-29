@@ -18,6 +18,11 @@ import { securityApi } from "@/api/security";
 import { useAuthStore } from "@/stores/auth";
 
 const authStore = useAuthStore();
+const HIDDEN_PERMISSION_CODES = new Set<Permission>([
+  "backup:manage",
+  "compliance:manage",
+  "compliance:read",
+]);
 const permissionLabels: Record<Permission, string> = {
   "analytics:view": "查看分析",
   "audit:export": "导出审计",
@@ -74,6 +79,10 @@ const policy = reactive<SecurityPolicy>({
 
 function permissionLabel(permission: Permission) {
   return permissionLabels[permission];
+}
+
+function displayedPermissions(permissions: readonly Permission[]) {
+  return permissions.filter((permission) => !HIDDEN_PERMISSION_CODES.has(permission));
 }
 
 function dataScopeLabel(scope: DataScopeType) {
@@ -166,7 +175,7 @@ async function loadEmailMfaPolicy() {
   try {
     Object.assign(emailMfaPolicy, await securityApi.getEmailMfaPolicy());
   } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "邮箱 MFA 策略加载失败"));
+    ElMessage.error(getErrorMessage(error, "邮箱验证策略加载失败"));
   } finally {
     emailMfaPolicyLoading.value = false;
   }
@@ -182,9 +191,9 @@ async function saveEmailMfaPolicy() {
       emailMfaPolicy,
       await securityApi.updateEmailMfaPolicy({ enabled: emailMfaPolicy.enabled }),
     );
-    ElMessage.success("邮箱 MFA 登录策略已保存");
+    ElMessage.success("邮箱验证登录策略已保存");
   } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "邮箱 MFA 策略保存失败"));
+    ElMessage.error(getErrorMessage(error, "邮箱验证策略保存失败"));
   } finally {
     emailMfaPolicySaving.value = false;
   }
@@ -239,7 +248,6 @@ onMounted(() => {
   <div class="security-page">
     <div class="page-heading">
       <div>
-        <p class="page-kicker">SECURITY POLICY</p>
         <h1>安全策略</h1>
         <p class="page-description">按最小权限、职责分离和强认证原则管理后台安全边界。</p>
       </div>
@@ -296,13 +304,13 @@ onMounted(() => {
           </el-form-item>
         </div>
         <div class="policy-form__switches">
-          <el-form-item label="管理员强制 MFA">
+          <el-form-item label="管理员强制邮箱验证">
             <el-switch v-model="policy.mfaRequiredForAdministrators" />
-            <small>启用前必须先为所有有效管理员完成绑定。</small>
+            <small>启用前必须先完成邮箱服务配置，并确保所有有效管理员都已填写邮箱地址。</small>
           </el-form-item>
           <el-form-item label="敏感操作二次验证">
             <el-switch v-model="policy.sensitiveActionReauth" />
-            <small>角色、数据范围、策略等变更应结合当前密码或 MFA 再确认。</small>
+            <small>角色、数据范围、策略等变更应结合当前密码或二次验证再确认。</small>
           </el-form-item>
         </div>
         <el-form-item label="允许登录来源 IP（每行一个，支持 IPv4/CIDR；留空表示不限制）">
@@ -320,7 +328,7 @@ onMounted(() => {
       <template #header>
         <div class="card-heading">
           <div>
-            <strong>邮箱双因素认证策略</strong>
+            <strong>邮箱验证登录策略</strong>
             <span>安全管理员负责决定是否允许使用邮箱验证码登录；SMTP 服务由系统管理员配置。</span>
           </div>
           <el-button
@@ -335,7 +343,7 @@ onMounted(() => {
       </template>
       <div class="email-mfa-policy__content">
         <div>
-          <strong>{{ emailMfaPolicy.enabled ? "邮箱 MFA 已启用" : "邮箱 MFA 默认关闭" }}</strong>
+          <strong>{{ emailMfaPolicy.enabled ? "邮箱验证已启用" : "邮箱验证默认关闭" }}</strong>
           <p>
             {{
               emailMfaPolicy.configured
@@ -462,7 +470,7 @@ onMounted(() => {
           <template #default="{ row }">
             <div class="permission-tags">
               <el-tag
-                v-for="permission in row.permissions"
+                v-for="permission in displayedPermissions(row.permissions)"
                 :key="permission"
                 size="small"
                 effect="plain"
@@ -490,14 +498,6 @@ onMounted(() => {
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 26px;
-}
-
-.page-kicker {
-  margin: 0 0 8px;
-  color: var(--ax-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
 }
 
 .page-heading h1 {

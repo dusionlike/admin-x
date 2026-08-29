@@ -19,7 +19,7 @@ export const PRIVACY_FIELD_CLASSIFICATIONS: readonly PrivacyFieldClassification[
   {
     category: "联系方式",
     field: "邮箱",
-    purpose: "账号通知和邮箱 MFA",
+    purpose: "账号通知和邮箱验证",
     required: true,
   },
   {

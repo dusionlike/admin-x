@@ -7,8 +7,6 @@ import { ArrowRight, Camera, Lock, Message, Setting, UserFilled } from "@element
 
 import type {
   AuthSession,
-  MfaSetupResponse,
-  MfaStatus,
   PasswordStatus,
   UpdatePasswordRequest,
   UpdateProfileRequest,
@@ -40,13 +38,6 @@ const saving = ref(false);
 const passwordSaving = ref(false);
 const privacyConsentSaving = ref(false);
 const passwordVisible = ref(false);
-const mfaVisible = ref(false);
-const mfaLoading = ref(false);
-const mfaEnabling = ref(false);
-const mfaPassword = ref("");
-const mfaCode = ref("");
-const mfaSetup = ref<MfaSetupResponse | null>(null);
-const mfaStatus = ref<MfaStatus>({ configured: false, enabled: false });
 const passwordStatus = ref<PasswordStatus | null>(null);
 const sessions = ref<AuthSession[]>([]);
 const sessionsLoading = ref(false);
@@ -135,14 +126,6 @@ function openEdit() {
   editVisible.value = true;
 }
 
-async function loadMfaStatus() {
-  try {
-    mfaStatus.value = await authApi.mfaStatus();
-  } catch {
-    // The account page remains usable if an older API does not expose MFA yet.
-  }
-}
-
 async function loadPasswordStatus() {
   try {
     passwordStatus.value = await usersApi.passwordStatus();
@@ -186,75 +169,6 @@ async function revokeSession(session: AuthSession) {
   } catch (error: unknown) {
     if (error !== "cancel" && error !== "close") {
       ElMessage.error(getErrorMessage(error, "撤销会话失败"));
-    }
-  }
-}
-
-function openMfaDialog() {
-  mfaPassword.value = "";
-  mfaCode.value = "";
-  mfaSetup.value = null;
-  mfaVisible.value = true;
-}
-
-async function beginMfaSetup() {
-  if (!mfaPassword.value) {
-    ElMessage.warning("请输入当前密码");
-    return;
-  }
-  mfaLoading.value = true;
-  try {
-    mfaSetup.value = await authApi.setupMfa(mfaPassword.value);
-    ElMessage.success("MFA 密钥已生成，请用认证器扫描或手动录入");
-  } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "MFA 配置生成失败"));
-  } finally {
-    mfaPassword.value = "";
-    mfaLoading.value = false;
-  }
-}
-
-async function enableMfa() {
-  if (!mfaSetup.value || !/^\d{6}$/.test(mfaCode.value)) {
-    ElMessage.warning("请输入认证器当前显示的 6 位验证码");
-    return;
-  }
-  mfaEnabling.value = true;
-  try {
-    const status = await authApi.enableMfa(mfaCode.value);
-    mfaStatus.value = status;
-    if (authStore.user) authStore.updateUser({ ...authStore.user, mfaEnabled: status.enabled });
-    mfaVisible.value = false;
-    ElMessage.success("MFA 多因素认证已启用");
-  } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "MFA 启用失败"));
-  } finally {
-    mfaCode.value = "";
-    mfaEnabling.value = false;
-  }
-}
-
-async function disableMfa() {
-  try {
-    const passwordPrompt = await ElMessageBox.prompt("请输入当前登录密码", "停用 MFA", {
-      inputType: "password",
-      inputPlaceholder: "当前密码",
-      confirmButtonText: "继续",
-      cancelButtonText: "取消",
-    });
-    const codePrompt = await ElMessageBox.prompt("请输入认证器当前的 6 位验证码", "验证 MFA", {
-      inputPattern: /^\d{6}$/,
-      inputErrorMessage: "请输入 6 位数字验证码",
-      confirmButtonText: "确认停用",
-      cancelButtonText: "取消",
-    });
-    const status = await authApi.disableMfa(passwordPrompt.value, codePrompt.value);
-    mfaStatus.value = status;
-    if (authStore.user) authStore.updateUser({ ...authStore.user, mfaEnabled: status.enabled });
-    ElMessage.success("MFA 已停用");
-  } catch (error: unknown) {
-    if (error !== "cancel" && error !== "close") {
-      ElMessage.error(getErrorMessage(error, "MFA 停用失败"));
     }
   }
 }
@@ -393,7 +307,6 @@ async function savePassword() {
 }
 
 onMounted(() => {
-  void loadMfaStatus();
   void loadPasswordStatus();
   void loadSessions();
 });
@@ -403,7 +316,6 @@ onMounted(() => {
   <div class="profile-page">
     <div class="page-heading">
       <div>
-        <p class="page-kicker">ACCOUNT</p>
         <h1>个人资料</h1>
         <p class="page-description">管理你的账号身份、头像和联系信息。</p>
       </div>
@@ -442,7 +354,6 @@ onMounted(() => {
             {{ initials }}
           </el-avatar>
           <div>
-            <p class="profile-eyebrow">WORKSPACE MEMBER</p>
             <h2>{{ profile?.displayName ?? "管理员" }}</h2>
             <span>@{{ profile?.username ?? "admin" }}</span>
           </div>
@@ -510,16 +421,12 @@ onMounted(() => {
       </div>
       <div>
         <h2>账号安全</h2>
-        <p>定期检查密码、MFA 和登录记录，保护管理账号安全。</p>
+        <p>定期检查密码、邮箱地址和登录记录；邮箱验证由安全管理员统一配置。</p>
       </div>
       <div class="profile-security-actions">
         <el-button text type="primary" @click="openPasswordDialog">
           修改登录密码 <el-icon><ArrowRight /></el-icon>
         </el-button>
-        <el-button v-if="!mfaStatus.enabled" text type="primary" @click="openMfaDialog">
-          绑定 MFA <el-icon><ArrowRight /></el-icon>
-        </el-button>
-        <el-button v-else text type="danger" @click="disableMfa">停用 MFA</el-button>
         <el-button text type="primary" @click="exportPersonalData">导出个人数据</el-button>
         <el-button text type="danger" @click="erasePersonalData">注销账号</el-button>
       </div>
@@ -558,47 +465,6 @@ onMounted(() => {
         </div>
       </div>
     </el-card>
-
-    <el-dialog
-      v-model="mfaVisible"
-      title="绑定 MFA 多因素认证"
-      width="min(520px, calc(100vw - 32px))"
-    >
-      <el-alert
-        v-if="!mfaSetup"
-        title="绑定后登录需要账号密码和认证器动态验证码"
-        type="info"
-        :closable="false"
-        show-icon
-      />
-      <el-form label-position="top">
-        <el-form-item label="当前密码">
-          <el-input
-            v-model="mfaPassword"
-            type="password"
-            show-password
-            autocomplete="off"
-            placeholder="先验证当前密码"
-            :disabled="Boolean(mfaSetup)"
-          />
-        </el-form-item>
-      </el-form>
-      <div v-if="mfaSetup" class="mfa-setup-result">
-        <p>请在认证器中新增以下账户，然后输入当前 6 位验证码完成绑定。</p>
-        <code>{{ mfaSetup.secret }}</code>
-        <el-input v-model="mfaSetup.otpauthUrl" readonly />
-        <el-input v-model="mfaCode" maxlength="6" placeholder="认证器验证码" />
-      </div>
-      <template #footer>
-        <el-button @click="mfaVisible = false">取消</el-button>
-        <el-button v-if="!mfaSetup" type="primary" :loading="mfaLoading" @click="beginMfaSetup">
-          生成绑定密钥
-        </el-button>
-        <el-button v-else type="primary" :loading="mfaEnabling" @click="enableMfa">
-          确认启用 MFA
-        </el-button>
-      </template>
-    </el-dialog>
 
     <el-dialog
       v-model="editVisible"
@@ -744,14 +610,6 @@ onMounted(() => {
   gap: 20px;
   margin-bottom: 26px;
 }
-.page-kicker,
-.profile-eyebrow {
-  margin: 0 0 8px;
-  color: var(--ax-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-}
 .page-heading h1 {
   margin: 0;
   color: var(--ax-heading);
@@ -794,10 +652,6 @@ onMounted(() => {
 .profile-hero > div {
   min-width: 0;
   flex: 1;
-}
-.profile-eyebrow {
-  margin-bottom: 6px;
-  font-size: 9px;
 }
 .profile-hero h2,
 .profile-card__heading h2,
@@ -933,6 +787,7 @@ onMounted(() => {
 }
 .profile-security-actions {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 4px;
@@ -983,28 +838,6 @@ onMounted(() => {
 .session-item__main small {
   color: var(--ax-muted);
   font-size: 11px;
-}
-.mfa-setup-result {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-  padding: 14px;
-  border: 1px solid var(--ax-line-soft);
-  border-radius: 10px;
-  background: var(--ax-surface-soft);
-}
-.mfa-setup-result p {
-  margin: 0;
-  color: var(--ax-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.mfa-setup-result code {
-  padding: 8px 10px;
-  color: var(--ax-heading);
-  font-size: 13px;
-  letter-spacing: 0.14em;
-  background: var(--ax-surface);
 }
 .edit-profile {
   margin-top: -4px;
@@ -1093,17 +926,23 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 }
+@media (max-width: 900px) {
+  .profile-security-card :deep(.el-card__body) {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .profile-security-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+}
 @media (max-width: 620px) {
   .profile-details,
   .edit-form-grid {
     grid-template-columns: 1fr;
   }
-  .profile-security-card :deep(.el-card__body),
   .avatar-editor {
     align-items: flex-start;
-  }
-  .profile-security-card :deep(.el-card__body) {
-    flex-wrap: wrap;
   }
   .session-item {
     align-items: flex-start;

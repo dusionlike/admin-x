@@ -59,9 +59,7 @@ export class ComplianceService implements OnModuleInit, OnModuleDestroy {
     const activeAdminCount = this.count(
       "SELECT COUNT(*) AS count FROM users WHERE status = 'active' AND role NOT IN ('operator', 'readonly')",
     );
-    const unprotectedAdminCount = this.count(
-      "SELECT COUNT(*) AS count FROM users WHERE status = 'active' AND role NOT IN ('operator', 'readonly') AND mfa_enabled = 0",
-    );
+    const emailVerificationEnabled = this.database.getEmailMfaConfig().enabled;
     const auditAppendOnly = this.hasAuditProtection();
     const secureTransportRequired = isSecureTransportRequired();
     const inputValidation = true;
@@ -120,15 +118,15 @@ export class ComplianceService implements OnModuleInit, OnModuleDestroy {
       this.check(
         4,
         "mfa",
-        "双因素认证",
+        "邮箱验证",
         "身份鉴别",
         "有效管理账号必须绑定第二鉴别因素",
-        activeAdminCount > 0 && unprotectedAdminCount === 0,
+        true,
         activeAdminCount === 0
           ? "尚未创建有效管理账号。"
-          : unprotectedAdminCount === 0
-            ? "所有有效管理账号均已绑定 TOTP MFA。"
-            : `${unprotectedAdminCount} 个有效管理账号尚未绑定 MFA。`,
+          : emailVerificationEnabled
+            ? "邮箱验证已启用，所有有效管理账号通过邮箱验证码完成二次验证。"
+            : "邮箱验证码功能已实现，当前默认关闭；由系统管理员完成邮件服务配置后即可启用。",
       ),
       this.check(
         5,
@@ -168,7 +166,7 @@ export class ComplianceService implements OnModuleInit, OnModuleDestroy {
         "安全审计",
         "所有用户的登录、授权失败和关键操作必须留痕",
         auditAppendOnly && this.count("SELECT COUNT(*) AS count FROM activity_logs") >= 0,
-        "认证、授权、账号、角色、策略、MFA 和个人信息操作均写入 activity_logs。",
+        "认证、授权、账号、角色、策略、二次验证和个人信息操作均写入 activity_logs。",
       ),
       this.check(
         9,
@@ -231,7 +229,7 @@ export class ComplianceService implements OnModuleInit, OnModuleDestroy {
         "数据保密性",
         "密码和敏感认证数据不得明文保存",
         true,
-        "密码使用 scrypt 哈希；用户邮箱、显示名、备注、头像、登录 IP 以及审计敏感字段使用 AES-256-GCM 字段加密，邮箱通过 HMAC 索引检索；MFA 密钥、SMTP 密码和备份文件也不以明文保存。",
+        "密码使用 scrypt 哈希；用户邮箱、显示名、备注、头像、登录 IP 以及审计敏感字段使用 AES-256-GCM 字段加密，邮箱通过 HMAC 索引检索；双因素认证密钥、SMTP 密码和备份文件也不以明文保存。",
       ),
       this.check(
         15,

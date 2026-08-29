@@ -42,7 +42,6 @@ export class SecurityService {
           `SELECT COUNT(*) AS count FROM users
            WHERE status = 'active'
              AND role NOT IN ('operator', 'readonly')
-             AND mfa_enabled = 0
              AND (
                email = '' OR NOT EXISTS (
                  SELECT 1 FROM email_mfa_config WHERE id = 1 AND enabled = 1
@@ -52,7 +51,7 @@ export class SecurityService {
         .get() as { count?: number | bigint } | undefined;
       if (Number(row?.count ?? 0) > 0) {
         throw new BadRequestException(
-          "启用管理员 MFA 强制策略前，请先为所有管理员绑定认证器 MFA，或先启用邮箱 MFA 并确认账号已配置邮箱",
+          "启用管理员邮箱验证强制策略前，请先由系统管理员配置并启用邮箱验证，并确保所有有效管理员都已填写邮箱地址",
         );
       }
     }

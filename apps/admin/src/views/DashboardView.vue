@@ -255,7 +255,6 @@ onBeforeUnmount(() => {
   <div class="dashboard-page">
     <div class="page-heading dashboard-heading">
       <div>
-        <p class="page-kicker">OVERVIEW</p>
         <h1>{{ greeting }}，{{ authStore.user?.displayName ?? "管理员" }}</h1>
         <p class="page-description">这里是今天的业务概览，愿你拥有高效且从容的一天。</p>
       </div>
@@ -421,14 +420,6 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 26px;
-}
-
-.page-kicker {
-  margin: 0 0 8px;
-  color: var(--ax-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
 }
 
 .page-heading h1 {

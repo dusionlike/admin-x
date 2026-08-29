@@ -196,26 +196,6 @@ test("locks an account after repeated password failures and records the blocked 
   database.onModuleDestroy();
 });
 
-test("encrypts MFA secrets at rest before binding", () => {
-  const { auth, database } = createAuth();
-  const setup = auth.setupAdmin({
-    displayName: "MFA 管理员",
-    email: "mfa@admin-x.dev",
-    password: "MfaAdminPass123!",
-    privacyNoticeAccepted: true,
-    username: "mfa-admin",
-  });
-  const mfa = auth.setupMfa(setup.user.id, "MfaAdminPass123!");
-  const row = database.connection
-    .prepare("SELECT mfa_secret FROM users WHERE id = ?")
-    .get(setup.user.id) as { mfa_secret?: string };
-
-  expect(mfa.secret).toHaveLength(32);
-  expect(row.mfa_secret).not.toBe(mfa.secret);
-  expect(auth.getMfaStatus(setup.user.id)).toEqual({ configured: true, enabled: false });
-  database.onModuleDestroy();
-});
-
 test("keeps email MFA disabled by default and supports the split configuration flow", async () => {
   const { auth, database, emailMfa, sentMessages } = createAuth();
   const context = { ipAddress: "127.0.0.1", requestId: "email-mfa-test" };
@@ -263,7 +243,6 @@ test("keeps email MFA disabled by default and supports the split configuration f
   const login = auth.login(
     {
       mfaCode: code,
-      mfaMethod: "email",
       password: "EmailMfaAdmin123!",
       username: "email-mfa-admin",
     },

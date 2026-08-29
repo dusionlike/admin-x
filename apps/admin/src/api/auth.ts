@@ -3,11 +3,10 @@ import type {
   AuthUser,
   ChangeExpiredPasswordRequest,
   EmailMfaCodeResponse,
+  LoginCaptchaResponse,
   LoginRequest,
   LoginResponse,
   MfaPublicConfig,
-  MfaSetupResponse,
-  MfaStatus,
   ReauthenticationResponse,
   SetupAdminRequest,
   SetupStatus,
@@ -16,6 +15,12 @@ import type {
 import { requestData } from "./http";
 
 export const authApi = {
+  loginCaptcha() {
+    return requestData<LoginCaptchaResponse>({
+      method: "GET",
+      url: "/auth/captcha",
+    });
+  },
   login(payload: LoginRequest) {
     return requestData<LoginResponse>({
       data: payload,
@@ -42,7 +47,12 @@ export const authApi = {
       url: "/auth/mfa/config",
     });
   },
-  requestEmailCode(payload: { username: string; password: string }) {
+  requestEmailCode(payload: {
+    captchaCode: string;
+    captchaId: string;
+    username: string;
+    password: string;
+  }) {
     return requestData<EmailMfaCodeResponse>({
       data: payload,
       method: "POST",
@@ -85,33 +95,6 @@ export const authApi = {
       data: { currentPassword },
       method: "POST",
       url: "/auth/reauth",
-    });
-  },
-  mfaStatus() {
-    return requestData<MfaStatus>({
-      method: "GET",
-      url: "/auth/mfa/status",
-    });
-  },
-  setupMfa(currentPassword: string) {
-    return requestData<MfaSetupResponse>({
-      data: { currentPassword },
-      method: "POST",
-      url: "/auth/mfa/setup",
-    });
-  },
-  enableMfa(code: string) {
-    return requestData<MfaStatus>({
-      data: { code },
-      method: "POST",
-      url: "/auth/mfa/enable",
-    });
-  },
-  disableMfa(currentPassword: string, code: string) {
-    return requestData<MfaStatus>({
-      data: { code, currentPassword },
-      method: "POST",
-      url: "/auth/mfa/disable",
     });
   },
 };

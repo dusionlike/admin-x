@@ -5,6 +5,7 @@ import { UsersModule } from "../users/users.module.js";
 import { AuthController } from "./auth.controller.js";
 import { AuthGuard } from "./auth.guard.js";
 import { AdminPrivilegeGuard } from "./admin-privilege.guard.js";
+import { CaptchaService } from "./captcha.service.js";
 import { EMAIL_TRANSPORT_FACTORY, EmailMfaService } from "./email-mfa.service.js";
 import type { EmailTransportConfig, EmailTransportFactory } from "./email-mfa.service.js";
 import { PermissionGuard } from "./permission.guard.js";
@@ -19,6 +20,7 @@ import { AuthService } from "./auth.service.js";
     AdminPrivilegeGuard,
     AuthGuard,
     AuthService,
+    CaptchaService,
     EmailMfaService,
     PermissionGuard,
     SensitiveActionGuard,

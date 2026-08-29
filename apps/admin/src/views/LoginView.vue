@@ -1,20 +1,15 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
 import { ArrowRight, Lock, Message, User } from "@element-plus/icons-vue";
 
 import type { LoginRequest, SetupAdminRequest } from "@admin-x/shared";
-import {
-  getAccountPasswordPolicyError,
-  getErrorMessage,
-  PRIVACY_NOTICE_DETAILS,
-  PRIVACY_NOTICE_SUMMARY,
-  PRIVACY_NOTICE_VERSION,
-} from "@admin-x/shared";
+import { getAccountPasswordPolicyError, getErrorMessage } from "@admin-x/shared";
 
 import { authApi } from "@/api/auth";
 import { SESSION_EXPIRED_KEY } from "@/api/http";
+import PrivacyNoticeDialog from "@/components/PrivacyNoticeDialog.vue";
 import ThemeToggleButton from "@/components/ThemeToggleButton.vue";
 import { useAuthStore } from "@/stores/auth";
 
@@ -30,13 +25,20 @@ const checkingSetup = ref(true);
 const needsSetup = ref(false);
 const setupLoading = ref(false);
 const emailMfaEnabled = ref(false);
+const emailMfaConfigLoading = ref(true);
 const emailCodeLoading = ref(false);
 const emailCodeHint = ref("");
+const emailCodeCountdown = ref(0);
+const emailVerificationVisible = ref(false);
+const captchaImage = ref("");
+const captchaLoading = ref(true);
 const expiredPasswordVisible = ref(false);
 const expiredPasswordLoading = ref(false);
 const privacyNoticeVisible = ref(false);
 const expiredPasswordFormRef = ref<FormInstance>();
 const form = reactive<LoginRequest>({
+  captchaCode: "",
+  captchaId: "",
   mfaCode: "",
   password: "",
   username: "",
@@ -53,21 +55,36 @@ const expiredPasswordForm = reactive<ExpiredPasswordForm>({
   confirmPassword: "",
   newPassword: "",
 });
+let emailCodeTimer: number | undefined;
+
+const loginSubmitLabel = computed(() => {
+  if (emailVerificationVisible.value) {
+    return "验证并登录";
+  }
+  if (emailMfaConfigLoading.value) {
+    return "准备登录…";
+  }
+  return emailMfaEnabled.value ? "获取邮箱验证码" : "进入管理中心";
+});
 
 const loginRules: FormRules<LoginRequest> = {
   password: [
     { message: "请输入密码", required: true, trigger: "blur" },
     { min: 6, message: "密码长度不能少于 6 位", trigger: "blur" },
   ],
+  captchaCode: [
+    { message: "请输入图形验证码", required: true, trigger: "blur" },
+    { message: "请输入 4 位图形验证码", pattern: /^[A-Za-z0-9]{4}$/u, trigger: "blur" },
+  ],
   mfaCode: [
     {
       trigger: "blur",
       validator: (_rule, value, callback) => {
         if (!value) {
-          callback();
+          callback(emailVerificationVisible.value ? new Error("请输入验证码") : undefined);
           return;
         }
-        callback(/^\d{6}$/.test(String(value)) ? undefined : new Error("MFA 验证码应为 6 位数字"));
+        callback(/^\d{6}$/.test(String(value)) ? undefined : new Error("验证码应为 6 位数字"));
       },
     },
   ],
@@ -165,14 +182,10 @@ async function loadMfaConfig() {
   try {
     const result = await authApi.mfaConfig();
     emailMfaEnabled.value = result.emailEnabled;
-    if (result.emailEnabled && !form.mfaMethod) {
-      form.mfaMethod = "email";
-    } else if (!result.emailEnabled) {
-      form.mfaMethod = undefined;
-    }
   } catch {
     emailMfaEnabled.value = false;
-    form.mfaMethod = undefined;
+  } finally {
+    emailMfaConfigLoading.value = false;
   }
 }
 
@@ -182,8 +195,45 @@ async function redirectToApp() {
 }
 
 function clearLoginSecrets() {
+  form.captchaCode = "";
   form.password = "";
   form.mfaCode = "";
+}
+
+async function refreshCaptcha() {
+  captchaLoading.value = true;
+  try {
+    const result = await authApi.loginCaptcha();
+    captchaImage.value = result.image;
+    form.captchaCode = "";
+    form.captchaId = result.id;
+  } catch (error: unknown) {
+    captchaImage.value = "";
+    form.captchaId = "";
+    ElMessage.error(getErrorMessage(error, "图形验证码加载失败，请稍后重试"));
+  } finally {
+    captchaLoading.value = false;
+  }
+}
+
+function clearEmailCodeTimer() {
+  if (emailCodeTimer !== undefined) {
+    window.clearInterval(emailCodeTimer);
+    emailCodeTimer = undefined;
+  }
+  emailCodeCountdown.value = 0;
+}
+
+function startEmailCodeCountdown() {
+  clearEmailCodeTimer();
+  emailCodeCountdown.value = 60;
+  emailCodeTimer = window.setInterval(() => {
+    if (emailCodeCountdown.value <= 1) {
+      clearEmailCodeTimer();
+      return;
+    }
+    emailCodeCountdown.value -= 1;
+  }, 1_000);
 }
 
 function clearSetupSecrets() {
@@ -193,10 +243,16 @@ function clearSetupSecrets() {
 
 function confirmPrivacyNoticeRead() {
   setupForm.privacyNoticeAccepted = true;
-  privacyNoticeVisible.value = false;
 }
 
 async function handleLogin() {
+  if (emailMfaConfigLoading.value || captchaLoading.value) {
+    return;
+  }
+  if (!form.captchaId) {
+    await refreshCaptcha();
+    return;
+  }
   if (!formRef.value) {
     return;
   }
@@ -206,7 +262,7 @@ async function handleLogin() {
     return;
   }
 
-  if (emailMfaEnabled.value && form.mfaMethod === "email" && !form.mfaCode) {
+  if (emailMfaEnabled.value && !emailVerificationVisible.value) {
     await requestEmailCode();
     return;
   }
@@ -227,10 +283,17 @@ async function handleLogin() {
     if (message.includes("密码已过期")) {
       expiredPasswordForm.newPassword = "";
       expiredPasswordForm.confirmPassword = "";
+      form.captchaCode = "";
+      void refreshCaptcha();
       expiredPasswordVisible.value = true;
       return;
     }
-    clearLoginSecrets();
+    if (emailVerificationVisible.value) {
+      form.mfaCode = "";
+    } else {
+      clearLoginSecrets();
+    }
+    void refreshCaptcha();
     ElMessage.error(message);
   }
 }
@@ -261,6 +324,13 @@ async function changeExpiredPassword() {
 }
 
 async function requestEmailCode() {
+  if (emailCodeCountdown.value > 0 || emailCodeLoading.value) {
+    return;
+  }
+  if (!emailMfaEnabled.value) {
+    ElMessage.info("邮箱验证尚未启用");
+    return;
+  }
   if (!form.username.trim() || !form.password) {
     ElMessage.warning("请先填写用户名和密码，再获取邮箱验证码");
     return;
@@ -268,13 +338,31 @@ async function requestEmailCode() {
   emailCodeLoading.value = true;
   try {
     const result = await authApi.requestEmailCode({
+      captchaCode: form.captchaCode ?? "",
+      captchaId: form.captchaId ?? "",
       password: form.password,
       username: form.username,
     });
+    form.mfaCode = "";
+    emailVerificationVisible.value = true;
     emailCodeHint.value = `验证码已发送至 ${result.maskedEmail}，${result.expiresIn / 60} 分钟内有效`;
+    startEmailCodeCountdown();
     ElMessage.success("邮箱验证码已发送");
   } catch (error: unknown) {
-    ElMessage.error(getErrorMessage(error, "邮箱验证码发送失败"));
+    const message = getErrorMessage(error, "邮箱验证码发送失败");
+    if (message.includes("密码已过期")) {
+      expiredPasswordForm.newPassword = "";
+      expiredPasswordForm.confirmPassword = "";
+      form.captchaCode = "";
+      void refreshCaptcha();
+      expiredPasswordVisible.value = true;
+      return;
+    }
+    if (message.includes("图形验证码")) {
+      form.captchaCode = "";
+      void refreshCaptcha();
+    }
+    ElMessage.error(message);
   } finally {
     emailCodeLoading.value = false;
   }
@@ -317,6 +405,11 @@ onMounted(() => {
   }
   void loadSetupStatus();
   void loadMfaConfig();
+  void refreshCaptcha();
+});
+
+onBeforeUnmount(() => {
+  clearEmailCodeTimer();
 });
 </script>
 
@@ -333,7 +426,6 @@ onMounted(() => {
         <span>Admin X</span>
       </div>
       <div class="login-intro__content">
-        <p class="eyebrow">ADMIN CONSOLE</p>
         <h1>让每一项工作，<br /><span>都能清晰、高效地完成。</span></h1>
         <p class="login-intro__description">
           面向团队的 Admin X 管理后台，统一管理成员、数据和安全策略。
@@ -359,7 +451,6 @@ onMounted(() => {
     <section class="login-panel">
       <div class="login-card">
         <div class="login-card__heading">
-          <p class="eyebrow">{{ needsSetup ? "INITIAL ADMIN SETUP" : "ACCOUNT ACCESS" }}</p>
           <h2>{{ needsSetup ? "创建首位管理员" : "登录管理中心" }}</h2>
           <p>
             {{
@@ -496,38 +587,49 @@ onMounted(() => {
               ></template>
             </el-input>
           </el-form-item>
-          <el-form-item v-if="emailMfaEnabled" label="登录认证方式">
-            <el-radio-group v-model="form.mfaMethod" class="login-mfa-methods">
-              <el-radio-button label="email">邮箱验证码</el-radio-button>
-              <el-radio-button label="totp">认证器验证码</el-radio-button>
-            </el-radio-group>
+          <el-form-item label="图形验证码" prop="captchaCode">
+            <div class="login-captcha">
+              <el-input
+                v-model="form.captchaCode"
+                class="login-captcha__input"
+                size="large"
+                maxlength="4"
+                autocomplete="off"
+                placeholder="请输入图中的验证码"
+              />
+              <button
+                class="login-captcha__image"
+                type="button"
+                aria-label="刷新图形验证码"
+                :disabled="captchaLoading"
+                @click="refreshCaptcha"
+              >
+                <img v-if="captchaImage" :src="captchaImage" alt="图形验证码，点击刷新" />
+                <span v-else>加载中…</span>
+              </button>
+            </div>
+            <small class="login-captcha__hint">看不清？点击右侧图片换一张</small>
           </el-form-item>
-          <el-form-item
-            :label="form.mfaMethod === 'email' ? '邮箱验证码' : 'MFA 动态验证码（认证器）'"
-            prop="mfaCode"
-          >
+          <el-form-item v-if="emailVerificationVisible" label="邮箱验证码" prop="mfaCode">
             <el-input
               v-model="form.mfaCode"
               size="large"
               maxlength="6"
               autocomplete="one-time-code"
-              :placeholder="
-                form.mfaMethod === 'email'
-                  ? '请输入邮箱收到的 6 位验证码'
-                  : '请输入认证器当前的 6 位验证码'
-              "
+              placeholder="请输入邮箱收到的 6 位验证码"
             >
-              <template v-if="emailMfaEnabled && form.mfaMethod === 'email'" #append>
+              <template #append>
                 <el-button
                   native-type="button"
+                  :disabled="emailCodeCountdown > 0"
                   :loading="emailCodeLoading"
                   @click="requestEmailCode"
                 >
-                  获取验证码
+                  {{ emailCodeCountdown > 0 ? `${emailCodeCountdown} 秒后重发` : "重新发送" }}
                 </el-button>
               </template>
             </el-input>
-            <small v-if="emailMfaEnabled && form.mfaMethod === 'email'" class="login-mfa-hint">
+            <small class="login-mfa-hint">
               {{ emailCodeHint || "验证码会发送到当前账号绑定的邮箱" }}
             </small>
           </el-form-item>
@@ -536,37 +638,21 @@ onMounted(() => {
             type="primary"
             size="large"
             native-type="submit"
+            :disabled="emailMfaConfigLoading"
             :loading="authStore.loginLoading"
           >
-            进入管理中心
+            {{ loginSubmitLabel }}
             <el-icon>
               <ArrowRight />
             </el-icon>
           </el-button>
         </el-form>
 
-        <el-dialog
+        <PrivacyNoticeDialog
           v-model="privacyNoticeVisible"
-          class="privacy-notice-dialog"
-          title="个人信息保护告知"
-          width="min(680px, calc(100vw - 32px))"
-          append-to-body
-          modal-class="privacy-notice-overlay"
-          :lock-scroll="false"
-        >
-          <p class="privacy-notice-dialog__version">告知版本：{{ PRIVACY_NOTICE_VERSION }}</p>
-          <p class="privacy-notice-dialog__summary">{{ PRIVACY_NOTICE_SUMMARY }}</p>
-          <div class="privacy-notice-dialog__sections">
-            <section v-for="section in PRIVACY_NOTICE_DETAILS" :key="section.title">
-              <h3>{{ section.title }}</h3>
-              <p>{{ section.content }}</p>
-            </section>
-          </div>
-          <p class="privacy-notice-dialog__tip">请阅读后勾选“我已阅读并同意”，再创建管理员账号。</p>
-          <template #footer>
-            <el-button type="primary" @click="confirmPrivacyNoticeRead">我已阅读</el-button>
-          </template>
-        </el-dialog>
+          action-label="创建管理员账号"
+          @read="confirmPrivacyNoticeRead"
+        />
 
         <el-dialog
           v-model="expiredPasswordVisible"
@@ -627,8 +713,9 @@ onMounted(() => {
 .login-page {
   position: relative;
   display: flex;
+  height: 100vh;
   min-height: 100vh;
-  overflow: hidden;
+  overflow: clip;
   color: #172033;
   background: #f4f6fb;
 }
@@ -684,7 +771,7 @@ onMounted(() => {
   flex: 1 1 55%;
   flex-direction: column;
   justify-content: space-between;
-  min-height: 100vh;
+  min-height: 0;
   padding: 54px clamp(40px, 6vw, 128px) 42px;
   color: #fff;
   background:
@@ -724,14 +811,6 @@ onMounted(() => {
 
 .login-intro__content {
   margin: -40px 0 0;
-}
-
-.eyebrow {
-  margin: 0 0 15px;
-  color: #8c80e9;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
 }
 
 .login-intro h1 {
@@ -790,9 +869,13 @@ onMounted(() => {
   flex: 1 1 45%;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  min-height: 0;
   min-width: 420px;
+  overflow-y: auto;
   padding: 52px 7vw 32px 4vw;
+  scrollbar-color: rgb(103 85 232 / 30%) transparent;
+  scrollbar-width: thin;
 }
 
 .login-card {
@@ -816,11 +899,6 @@ onMounted(() => {
   margin: 9px 0 32px;
   color: #8b96a8;
   font-size: 12px;
-}
-
-.login-card__heading .eyebrow {
-  margin-bottom: 9px;
-  color: #6755e8;
 }
 
 .login-form :deep(.el-form-item) {
@@ -859,75 +937,6 @@ onMounted(() => {
 .privacy-notice-link:hover {
   color: #5141d8;
   text-decoration: underline;
-}
-
-:global(.privacy-notice-dialog) {
-  display: flex;
-  flex-direction: column;
-  max-height: calc(100vh - 48px);
-  margin: 0 auto;
-  overflow: hidden;
-}
-
-:global(.privacy-notice-dialog .el-dialog__header),
-:global(.privacy-notice-dialog .el-dialog__footer) {
-  flex: 0 0 auto;
-}
-
-:global(.privacy-notice-dialog .el-dialog__body) {
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow-y: auto;
-}
-
-:global(.privacy-notice-dialog__sections) {
-  display: grid;
-  gap: 16px;
-  margin-top: 20px;
-}
-
-:global(.privacy-notice-dialog__sections section) {
-  margin: 0;
-}
-
-:global(.privacy-notice-dialog__sections h3) {
-  margin: 0 0 5px;
-  color: var(--ax-heading);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-:global(.privacy-notice-dialog__sections p),
-:global(.privacy-notice-dialog__version),
-:global(.privacy-notice-dialog__summary),
-:global(.privacy-notice-dialog__tip) {
-  margin: 0;
-  color: var(--ax-content);
-  font-size: 13px;
-  line-height: 1.8;
-}
-
-:global(.privacy-notice-dialog__version) {
-  color: var(--ax-muted);
-  font-size: 12px;
-}
-
-:global(.privacy-notice-dialog__summary) {
-  margin-top: 12px;
-}
-
-:global(.privacy-notice-dialog__tip) {
-  margin-top: 16px;
-  color: var(--ax-muted);
-  font-size: 12px;
-}
-
-:global(.privacy-notice-overlay .el-overlay-dialog) {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  overflow: hidden;
 }
 
 html.dark .privacy-consent :deep(.el-checkbox__label) {
@@ -1009,16 +1018,63 @@ html.dark .login-form :deep(.el-input__suffix-inner) {
   margin: -4px 0 24px;
 }
 
-.login-mfa-methods {
+.login-captcha {
+  display: grid;
   width: 100%;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 10px;
+  align-items: stretch;
 }
 
-.login-mfa-methods :deep(.el-radio-button) {
-  flex: 1;
+.login-captcha__input :deep(.el-input__inner) {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
-.login-mfa-methods :deep(.el-radio-button__inner) {
+.login-captcha__image {
+  display: flex;
+  width: 132px;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: hidden;
+  color: #7c8799;
+  font-size: 11px;
+  cursor: pointer;
+  background: #f4f6fb;
+  border: 1px solid #e7ebf3;
+  border-radius: 8px;
+}
+
+.login-captcha__image:hover:not(:disabled) {
+  border-color: #9d94ee;
+}
+
+.login-captcha__image:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.login-captcha__image img {
+  display: block;
   width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.login-captcha__hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--ax-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+html.dark .login-captcha__image {
+  color: var(--ax-muted);
+  background: var(--ax-surface-muted);
+  border-color: var(--ax-line);
 }
 
 .login-mfa-hint {
@@ -1091,9 +1147,11 @@ html.dark .login-form :deep(.el-input__suffix-inner) {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 860px) {
   .login-page {
     display: block;
+    height: auto;
+    min-height: 100vh;
     overflow: auto;
   }
 
@@ -1123,6 +1181,7 @@ html.dark .login-form :deep(.el-input__suffix-inner) {
 
   .login-panel {
     min-width: 0;
+    overflow: visible;
     padding: 30px 20px 42px;
   }
 

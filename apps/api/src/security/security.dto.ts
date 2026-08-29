@@ -50,7 +50,7 @@ export class UpdateSecurityPolicyDto implements SecurityPolicy {
   @Max(20, { message: "登录失败次数不能超过 20 次" })
   loginFailureLimit!: number;
 
-  @IsBoolean({ message: "管理员 MFA 配置不正确" })
+  @IsBoolean({ message: "管理员邮箱验证配置不正确" })
   mfaRequiredForAdministrators!: boolean;
 
   @IsInt({ message: "密码最小长度必须是整数" })
@@ -108,6 +108,6 @@ export class UpdateEmailMfaTransportDto implements UpdateEmailMfaTransportSettin
 }
 
 export class UpdateEmailMfaPolicyDto implements UpdateEmailMfaPolicy {
-  @IsBoolean({ message: "邮箱 MFA 开关配置不正确" })
+  @IsBoolean({ message: "邮箱验证开关配置不正确" })
   enabled!: boolean;
 }

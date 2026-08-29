@@ -46,7 +46,6 @@ import {
 } from "@admin-x/shared";
 
 import { hashPassword, verifyPassword } from "../auth/password.js";
-import { decryptMfaSecret, encryptMfaSecret } from "../auth/mfa.js";
 import type { AuditContext } from "../database/database.service.js";
 import { DatabaseService } from "../database/database.service.js";
 import {
@@ -70,8 +69,6 @@ interface UserRow {
   remark: string;
   data_scope: string;
   data_scope_ids: string;
-  mfa_enabled: number;
-  mfa_secret: string;
   failed_login_count: number;
   locked_until: string | null;
   session_version: number;
@@ -104,7 +101,7 @@ export interface LoginCredentials {
 
 const USER_COLUMNS = `
   id, username, display_name, email, password_hash, role, status, avatar, remark,
-  security_level, data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
+  security_level, data_scope, data_scope_ids, failed_login_count, locked_until,
   session_version, password_changed_at, privacy_notice_accepted_at, privacy_notice_version,
   privacy_notice_summary, privacy_notice_ip, last_login_ip,
   created_at, last_active_at`;
@@ -931,67 +928,6 @@ export class UsersService {
     return { lockedUntil: nextLockedUntil };
   }
 
-  getMfaStatus(id: string): { enabled: boolean; configured: boolean } {
-    const row = this.findRowById(id);
-    if (!row) {
-      throw new NotFoundException("用户不存在");
-    }
-    return { configured: Boolean(row.mfa_secret), enabled: Boolean(row.mfa_enabled) };
-  }
-
-  getMfaSecret(id: string): string {
-    const row = this.findRowById(id);
-    if (!row) {
-      throw new NotFoundException("用户不存在");
-    }
-    return decryptMfaSecret(row.mfa_secret);
-  }
-
-  saveMfaSecret(id: string, secret: string, context?: AuditContext): void {
-    const row = this.findRowById(id);
-    if (!row) {
-      throw new NotFoundException("用户不存在");
-    }
-    this.database.connection
-      .prepare("UPDATE users SET mfa_secret = ? WHERE id = ?")
-      .run(secret ? encryptMfaSecret(secret) : "", id);
-    this.database.refreshUserIntegrityMac(id);
-    this.database.addActivity({
-      action: "mfa.setup",
-      actor: toAuditActor(toAuthUser(row)),
-      context,
-      description: `${row.display_name}（@${row.username}）生成了 MFA 绑定密钥`,
-      title: "生成 MFA 绑定配置",
-      type: "update",
-      resource: "mfa",
-      targetId: id,
-    });
-  }
-
-  setMfaEnabled(id: string, enabled: boolean, context?: AuditContext): void {
-    const row = this.findRowById(id);
-    if (!row) {
-      throw new NotFoundException("用户不存在");
-    }
-    this.database.connection
-      .prepare(
-        "UPDATE users SET mfa_enabled = ?, session_version = session_version + 1 WHERE id = ?",
-      )
-      .run(enabled ? 1 : 0, id);
-    this.database.refreshUserIntegrityMac(id);
-    this.database.revokeUserSessions(id);
-    this.database.addActivity({
-      action: enabled ? "mfa.enable" : "mfa.disable",
-      actor: toAuditActor(toAuthUser(row)),
-      context,
-      description: `${row.display_name}（@${row.username}）${enabled ? "启用了" : "停用了"} MFA 多因素认证`,
-      title: enabled ? "启用 MFA 多因素认证" : "停用 MFA 多因素认证",
-      type: "update",
-      resource: "mfa",
-      targetId: id,
-    });
-  }
-
   verifyCurrentPassword(id: string, password: string): boolean {
     const row = this.findRowById(id);
     return Boolean(row && verifyPassword(password, row.password_hash));
@@ -1066,10 +1002,10 @@ export class UsersService {
       .prepare(
         `INSERT INTO users
           (id, username, display_name, email, email_lookup, password_hash, role, status, avatar, remark,
-           data_scope, data_scope_ids, mfa_enabled, mfa_secret, failed_login_count, locked_until,
+           data_scope, data_scope_ids, failed_login_count, locked_until,
            session_version, password_changed_at, privacy_notice_accepted_at, privacy_notice_version,
            privacy_notice_summary, privacy_notice_ip, last_login_ip, created_at, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -1084,8 +1020,6 @@ export class UsersService {
         encryptSensitive(input.remark?.trim() ?? ""),
         defaultDataScopeForRole(input.role),
         "[]",
-        0,
-        "",
         0,
         null,
         0,
@@ -1178,7 +1112,6 @@ function toPublicRecord(row: UserRow, actor?: AuthUser): UserRecord {
     email: canViewFullEmail(row, actor) ? row.email : maskPersonalEmail(row.email),
     id: row.id,
     lastActiveAt: formatLastActiveAt(row.last_active_at),
-    mfaEnabled: Boolean(row.mfa_enabled),
     remark: row.remark,
     role: row.role,
     securityLevel: row.security_level,
@@ -1194,7 +1127,6 @@ function toAuthUser(row: UserRow): AuthUser {
     displayName: row.display_name,
     email: row.email,
     id: row.id,
-    mfaEnabled: Boolean(row.mfa_enabled),
     privacyNoticeVersion: row.privacy_notice_version || undefined,
     remark: row.remark,
     role: row.role,
@@ -1217,7 +1149,6 @@ function auditUser(user: UserRecord | AuthUser): Record<string, unknown> {
     displayName: user.displayName,
     email: user.email,
     id: user.id,
-    mfaEnabled: user.mfaEnabled,
     role: user.role,
     securityLevel: user.securityLevel,
     status: "status" in user ? user.status : undefined,

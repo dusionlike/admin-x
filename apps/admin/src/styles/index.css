@@ -159,12 +159,22 @@ select {
   min-width: 72px;
 }
 
+.admin-aside.is-collapsed .brand-block {
+  justify-content: flex-start;
+  gap: 0;
+  padding-right: 18px;
+  padding-left: 18px;
+}
+
 .brand-block {
   display: flex;
   align-items: center;
   gap: 12px;
   height: 88px;
   padding: 0 24px;
+  transition:
+    gap 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .brand-mark {
@@ -279,19 +289,21 @@ select {
   border-radius: 9px;
   transition:
     width 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
     color 0.16s ease;
 }
 
 .admin-aside.is-collapsed .side-menu .el-menu-item {
   width: 48px;
-  padding: 0;
-  justify-content: center;
+  padding: 0 12px;
+  justify-content: flex-start;
 }
 
 .side-menu .el-icon {
   flex: 0 0 auto;
   margin-right: 11px;
   color: inherit;
+  transition: margin-right 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .admin-aside.is-collapsed .side-menu .el-icon {
@@ -327,11 +339,6 @@ select {
   color: #fff;
   background: linear-gradient(90deg, rgb(103 85 232 / 95%), rgb(96 77 222 / 75%));
   box-shadow: 0 8px 18px rgb(50 33 160 / 22%);
-}
-
-.side-menu .el-icon {
-  margin-right: 11px;
-  color: inherit;
 }
 
 .menu-section-title {
@@ -551,14 +558,6 @@ select {
 
 .page-heading > :first-child {
   min-width: 0;
-}
-
-.page-kicker {
-  margin: 0 0 8px;
-  color: var(--ax-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
 }
 
 .page-heading h1 {

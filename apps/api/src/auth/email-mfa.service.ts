@@ -100,7 +100,7 @@ export class EmailMfaService {
     };
 
     if (before.enabled) {
-      await this.verifyTransport(next, "当前已启用的邮箱 MFA 服务不可用，请修正配置后重试");
+      await this.verifyTransport(next, "当前已启用的邮箱验证服务不可用，请修正配置后重试");
     }
 
     this.database.updateEmailMfaConfig(next);
@@ -111,8 +111,8 @@ export class EmailMfaService {
       after,
       before: this.toSettings(before),
       context,
-      description: `${actor.displayName}（@${actor.username}）更新了邮箱 MFA 发信服务配置`,
-      title: "更新邮箱 MFA 发信配置",
+      description: `${actor.displayName}（@${actor.username}）更新了邮箱验证发信服务配置`,
+      title: "更新邮箱验证发信配置",
       type: "update",
       resource: "email-mfa",
       targetId: actor.id,
@@ -133,13 +133,13 @@ export class EmailMfaService {
         throw new BadRequestException("请先由系统管理员完成邮箱服务配置并测试发信");
       }
       try {
-        await this.verifyTransport(config, "邮箱 MFA 发信服务连接失败，暂时不能启用");
+        await this.verifyTransport(config, "邮箱验证发信服务连接失败，暂时不能启用");
       } catch (error: unknown) {
         this.recordFailure(
           actor,
           context,
           "email-mfa.policy.update",
-          "启用邮箱 MFA 前的发信服务检查失败",
+          "启用邮箱验证前的发信服务检查失败",
         );
         throw error;
       }
@@ -153,8 +153,8 @@ export class EmailMfaService {
       after,
       before,
       context,
-      description: `${actor.displayName}（@${actor.username}）${enabled ? "启用" : "停用"}了邮箱 MFA 登录策略`,
-      title: `${enabled ? "启用" : "停用"}邮箱 MFA 登录策略`,
+      description: `${actor.displayName}（@${actor.username}）${enabled ? "启用" : "停用"}了邮箱验证登录策略`,
+      title: `${enabled ? "启用" : "停用"}邮箱验证登录策略`,
       type: "update",
       resource: "email-mfa",
       targetId: actor.id,
@@ -176,12 +176,12 @@ export class EmailMfaService {
       const transport = await this.verifyTransport(config, "邮箱服务连接失败，请检查 SMTP 配置");
       await transport.sendMail({
         from: formatFrom(config),
-        subject: "[Admin X] 邮箱 MFA 发信测试",
-        text: `Admin X 邮箱 MFA 发信测试成功。\n\n测试时间：${new Date().toLocaleString("zh-CN")}`,
+        subject: "[Admin X] 邮箱验证发信测试",
+        text: `Admin X 邮箱验证发信测试成功。\n\n测试时间：${new Date().toLocaleString("zh-CN")}`,
         to: actor.email,
       });
     } catch (error: unknown) {
-      this.recordFailure(actor, context, "email-mfa.delivery-test", "邮箱 MFA 测试邮件发送失败");
+      this.recordFailure(actor, context, "email-mfa.delivery-test", "邮箱验证测试邮件发送失败");
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -193,8 +193,8 @@ export class EmailMfaService {
       actor: toAuditActor(actor),
       after: { maskedEmail: maskEmail(actor.email) },
       context,
-      description: `${actor.displayName}（@${actor.username}）发送了邮箱 MFA 测试邮件`,
-      title: "测试邮箱 MFA 发信",
+      description: `${actor.displayName}（@${actor.username}）发送了邮箱验证测试邮件`,
+      title: "测试邮箱验证发信",
       type: "system",
       resource: "email-mfa",
       targetId: actor.id,
@@ -206,7 +206,7 @@ export class EmailMfaService {
     const config = this.database.getEmailMfaConfig();
     const password = decryptSmtpPassword(config.smtpPasswordEncrypted);
     if (!config.enabled || !isTransportConfigured(config, password)) {
-      throw new BadRequestException("邮箱 MFA 当前未启用");
+      throw new BadRequestException("邮箱验证当前未启用");
     }
     if (!user.email) {
       throw new BadRequestException("当前账号未配置邮箱地址，无法发送验证码");
@@ -243,7 +243,7 @@ export class EmailMfaService {
       });
     } catch {
       this.database.consumeEmailMfaChallenge(challengeId);
-      this.recordFailure(user, context, "auth.email-mfa.sent", "邮箱 MFA 验证码发送失败");
+      this.recordFailure(user, context, "auth.email-mfa.sent", "邮箱验证码发送失败");
       throw new ServiceUnavailableException("邮箱验证码发送失败，请稍后重试");
     }
 
@@ -252,8 +252,8 @@ export class EmailMfaService {
       actor: toAuditActor(user),
       after: { maskedEmail: maskEmail(user.email), expiresIn: EMAIL_CODE_EXPIRES_SECONDS },
       context,
-      description: `已向 ${maskEmail(user.email)} 发送邮箱 MFA 验证码`,
-      title: "发送邮箱 MFA 验证码",
+      description: `已向 ${maskEmail(user.email)} 发送邮箱验证码`,
+      title: "发送邮箱验证码",
       type: "login",
       resource: "auth",
       targetId: user.id,

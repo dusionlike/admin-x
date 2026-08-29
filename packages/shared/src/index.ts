@@ -8,7 +8,6 @@ export type UserRole =
   | "business-admin"
   | "operator"
   | "readonly";
-export type MfaMethod = "totp" | "email";
 export type UserStatus = "active" | "invited" | "suspended";
 export type DataScopeType = "all" | "organization" | "department" | "project" | "assigned" | "self";
 export type SecurityLevel = "public" | "internal" | "secret" | "confidential";
@@ -215,12 +214,12 @@ export const PRIVACY_NOTICE_DETAILS = [
   {
     title: "二、收集和处理的信息",
     content:
-      "系统根据管理需要处理用户名、显示名称、邮箱、岗位角色、数据范围、必要备注和头像等账号资料；为保障账号安全，还会处理登录 IP、登录时间、浏览器或设备标识，以及登录、登出、认证失败、密码或多因素认证变更、权限和安全配置变更等审计记录。",
+      "系统根据管理需要处理用户名、显示名称、邮箱、岗位角色、数据范围、必要备注和头像等账号资料；为保障账号安全，还会处理登录 IP、登录时间、浏览器或设备标识，以及登录、登出、认证失败、密码或邮箱验证配置变更、权限和安全配置变更等审计记录。",
   },
   {
     title: "三、处理目的和方式",
     content:
-      "上述信息用于身份鉴别、账号管理、岗位授权、最小权限控制、账号通知、可选的邮箱多因素认证、会话管理、异常访问追溯和安全审计。系统通过服务端校验、角色权限控制、加密存储、不可逆哈希和自动化审计等方式处理相关信息。",
+      "上述信息用于身份鉴别、账号管理、岗位授权、最小权限控制、账号通知、可选的邮箱验证、会话管理、异常访问追溯和安全审计。系统通过服务端校验、角色权限控制、加密存储、不可逆哈希和自动化审计等方式处理相关信息。",
   },
   {
     title: "四、保存期限和到期处理",
@@ -230,12 +229,12 @@ export const PRIVACY_NOTICE_DETAILS = [
   {
     title: "五、共享、委托和邮箱服务",
     content:
-      "系统默认不出售、公开或向无关第三方共享个人信息。邮箱多因素认证默认关闭；启用后，仅会通过部署单位配置的邮件服务向账号绑定邮箱发送一次性验证码。若后续因业务或法律法规需要发生委托处理、共享或其他提供行为，部署单位应在启用前明确相关目的、范围、期限和接收方，并按要求另行告知。",
+      "系统默认不出售、公开或向无关第三方共享个人信息。邮箱验证默认关闭；启用后，仅会通过部署单位配置的邮件服务向账号绑定邮箱发送一次性验证码。若后续因业务或法律法规需要发生委托处理、共享或其他提供行为，部署单位应在启用前明确相关目的、范围、期限和接收方，并按要求另行告知。",
   },
   {
     title: "六、信息安全措施",
     content:
-      "系统采用角色和数据范围控制、最小权限、密码不可逆哈希、多因素认证、敏感字段加密、会话失效管理、访问审计、输入校验和完整性检查等措施保护个人信息。密码、验证码和多因素认证密钥不会以明文形式在页面或普通接口中返回。",
+      "系统采用角色和数据范围控制、最小权限、密码不可逆哈希、邮箱验证、敏感字段加密、会话失效管理、访问审计、输入校验和完整性检查等措施保护个人信息。密码和验证码不会以明文形式在页面或普通接口中返回。",
   },
   {
     title: "七、你的权利",
@@ -343,7 +342,6 @@ export interface AuthUser {
   role: UserRole;
   securityLevel: SecurityLevel;
   dataScope: DataScope;
-  mfaEnabled: boolean;
   privacyNoticeVersion?: string;
   email?: string;
   avatar?: string;
@@ -352,10 +350,11 @@ export interface AuthUser {
 }
 
 export interface LoginRequest {
+  captchaCode?: string;
+  captchaId?: string;
   username: string;
   password: string;
   mfaCode?: string;
-  mfaMethod?: MfaMethod;
 }
 
 export interface LoginResponse {
@@ -386,6 +385,12 @@ export interface ReauthenticationResponse {
 
 export interface SetupStatus {
   needsSetup: boolean;
+}
+
+export interface LoginCaptchaResponse {
+  id: string;
+  image: string;
+  expiresIn: number;
 }
 
 export interface SetupAdminRequest {
@@ -467,7 +472,6 @@ export interface UserRecord {
   securityLevel: SecurityLevel;
   status: UserStatus;
   dataScope: DataScope;
-  mfaEnabled: boolean;
   remark?: string;
   createdAt: string;
   lastActiveAt: string;
@@ -723,18 +727,8 @@ export interface PersonalDataExport {
     summary: string;
     version: string;
   };
-  user: Omit<AuthUser, "mfaEnabled"> & { mfaEnabled: boolean };
+  user: AuthUser;
   auditRecords: AuditRecord[];
-}
-
-export interface MfaStatus {
-  enabled: boolean;
-  configured: boolean;
-}
-
-export interface MfaSetupResponse {
-  secret: string;
-  otpauthUrl: string;
 }
 
 export interface UpdateProfileRequest {

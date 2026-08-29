@@ -16,10 +16,9 @@ import type {
   AuthSession,
   AuthUser,
   EmailMfaCodeResponse,
+  LoginCaptchaResponse,
   LoginResponse,
   MfaPublicConfig,
-  MfaSetupResponse,
-  MfaStatus,
   ReauthenticationResponse,
   SetupStatus,
 } from "@admin-x/shared";
@@ -27,13 +26,11 @@ import { createApiResponse } from "@admin-x/shared";
 
 import { AuthGuard } from "./auth.guard.js";
 import type { AuthenticatedRequest } from "./auth.guard.js";
+import { CaptchaService } from "./captcha.service.js";
 import {
   ChangeExpiredPasswordDto,
-  LoginDto,
   EmailMfaCodeRequestDto,
-  MfaCodeDto,
-  MfaDisableDto,
-  MfaSetupDto,
+  LoginDto,
   ReauthenticationDto,
   SetupAdminDto,
 } from "./auth.dto.js";
@@ -43,13 +40,22 @@ import { DtoValidationPipe } from "../validation/dto-validation.pipe.js";
 
 @Controller("auth")
 export class AuthController {
-  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
+  constructor(
+    @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(CaptchaService) private readonly captchaService: CaptchaService,
+  ) {}
+
+  @Get("captcha")
+  captcha(@Request() request: AuthenticatedRequest): ApiResponse<LoginCaptchaResponse> {
+    return createApiResponse(this.captchaService.issue(getAuditContext(request)));
+  }
 
   @Post("login")
   login(
     @Body(new DtoValidationPipe(LoginDto)) body: LoginDto,
     @Request() request: AuthenticatedRequest,
   ): ApiResponse<LoginResponse> {
+    this.captchaService.assertValid(body.captchaId, body.captchaCode, getAuditContext(request));
     return createApiResponse(this.authService.login(body, getAuditContext(request)));
   }
 
@@ -76,6 +82,12 @@ export class AuthController {
     @Body(new DtoValidationPipe(EmailMfaCodeRequestDto)) body: EmailMfaCodeRequestDto,
     @Request() request: AuthenticatedRequest,
   ): Promise<ApiResponse<EmailMfaCodeResponse>> {
+    this.captchaService.assertValid(
+      body.captchaId,
+      body.captchaCode,
+      getAuditContext(request),
+      false,
+    );
     return createApiResponse(
       await this.authService.requestEmailMfaCode(
         body.username,
@@ -134,50 +146,6 @@ export class AuthController {
       this.authService.reauthenticate(
         request.user.id,
         body.currentPassword,
-        getAuditContext(request),
-      ),
-    );
-  }
-
-  @Get("mfa/status")
-  @UseGuards(AuthGuard)
-  mfaStatus(@Request() request: AuthenticatedRequest): ApiResponse<MfaStatus> {
-    return createApiResponse(this.authService.getMfaStatus(request.user.id));
-  }
-
-  @Post("mfa/setup")
-  @UseGuards(AuthGuard)
-  setupMfa(
-    @Body(new DtoValidationPipe(MfaSetupDto)) body: MfaSetupDto,
-    @Request() request: AuthenticatedRequest,
-  ): ApiResponse<MfaSetupResponse> {
-    return createApiResponse(
-      this.authService.setupMfa(request.user.id, body.currentPassword, getAuditContext(request)),
-    );
-  }
-
-  @Post("mfa/enable")
-  @UseGuards(AuthGuard)
-  enableMfa(
-    @Body(new DtoValidationPipe(MfaCodeDto)) body: MfaCodeDto,
-    @Request() request: AuthenticatedRequest,
-  ): ApiResponse<MfaStatus> {
-    return createApiResponse(
-      this.authService.enableMfa(request.user.id, body.code, getAuditContext(request)),
-    );
-  }
-
-  @Post("mfa/disable")
-  @UseGuards(AuthGuard)
-  disableMfa(
-    @Body(new DtoValidationPipe(MfaDisableDto)) body: MfaDisableDto,
-    @Request() request: AuthenticatedRequest,
-  ): ApiResponse<MfaStatus> {
-    return createApiResponse(
-      this.authService.disableMfa(
-        request.user.id,
-        body.currentPassword,
-        body.code,
         getAuditContext(request),
       ),
     );

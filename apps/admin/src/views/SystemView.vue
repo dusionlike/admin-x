@@ -152,35 +152,36 @@ onMounted(() => {
   <div class="system-page" v-loading="loading">
     <div class="page-heading">
       <div>
-        <p class="page-kicker">SYSTEM CONFIGURATION</p>
         <h1>系统配置</h1>
-        <p class="page-description">系统管理员负责配置基础运行服务，不直接决定安全策略是否启用。</p>
+        <p class="page-description">集中管理系统运行所需的服务与基础参数。</p>
       </div>
       <el-tag :type="settings.enabled ? 'success' : 'info'" effect="light">
-        邮箱 MFA {{ settings.enabled ? "已启用" : "默认关闭" }}
+        邮箱验证 {{ settings.enabled ? "已启用" : "默认关闭" }}
       </el-tag>
     </div>
-
-    <el-card class="responsibility-card" shadow="never">
-      <div class="responsibility-card__item">
-        <el-tag type="primary" effect="plain">系统管理员</el-tag>
-        <span>填写 SMTP 主机、端口、账号和发件地址，并发送测试邮件。</span>
-      </div>
-      <div class="responsibility-card__item">
-        <el-tag type="warning" effect="plain">安全管理员</el-tag>
-        <span>在“安全策略”中根据组织要求启用或停用邮箱 MFA 登录策略。</span>
-      </div>
-    </el-card>
 
     <el-card class="config-card" shadow="never">
       <template #header>
         <div class="card-heading">
-          <div>
-            <strong>邮箱 MFA 发信服务</strong>
-            <span>SMTP 密码不会回显，留空表示保留当前已保存的密码。</span>
+          <div class="card-heading__copy">
+            <strong>系统服务配置</strong>
+            <span>管理系统运行所需的外部服务参数，后续可继续扩展其他配置项。</span>
           </div>
-          <div class="card-actions">
-            <el-tag :type="settings.configured ? 'success' : 'warning'" effect="plain">
+          <el-button type="primary" :loading="saving" @click="saveSettings">保存配置</el-button>
+        </div>
+      </template>
+
+      <section class="system-config-section">
+        <div class="system-config-section__heading">
+          <div class="system-config-section__copy">
+            <strong>邮箱验证发信服务</strong>
+          </div>
+          <div class="system-config-section__actions">
+            <el-tag
+              class="config-status-tag"
+              :type="settings.configured ? 'success' : 'warning'"
+              effect="plain"
+            >
               {{ settings.configured ? "配置完整" : "待配置" }}
             </el-tag>
             <el-button
@@ -192,31 +193,36 @@ onMounted(() => {
             >
               发送测试邮件
             </el-button>
-            <el-button type="primary" :loading="saving" @click="saveSettings">保存配置</el-button>
           </div>
         </div>
-      </template>
 
-      <el-form
-        ref="formRef"
-        class="config-form"
-        :model="transport"
-        :rules="rules"
-        label-position="top"
-      >
-        <div class="config-form__grid">
+        <el-form
+          ref="formRef"
+          class="config-form"
+          :model="transport"
+          :rules="rules"
+          label-position="top"
+        >
           <el-form-item label="SMTP 主机" prop="smtpHost">
             <el-input v-model="transport.smtpHost" placeholder="例如 smtp.example.com" />
           </el-form-item>
-          <el-form-item label="SMTP 端口">
-            <el-input-number v-model="transport.smtpPort" :min="1" :max="65535" />
+          <el-form-item class="config-form__item--port" label="SMTP 端口">
+            <el-input-number
+              v-model="transport.smtpPort"
+              class="smtp-port-input"
+              :min="1"
+              :max="65535"
+              controls-position="right"
+            />
+            <span class="config-form__hint">常用端口：587 / 465</span>
           </el-form-item>
-          <el-form-item label="加密连接">
+          <el-form-item class="config-form__item--secure" label="加密连接">
             <el-switch
               v-model="transport.smtpSecure"
               active-text="TLS/SSL"
               inactive-text="STARTTLS"
             />
+            <span class="config-form__hint">按邮件服务商的连接要求选择</span>
           </el-form-item>
           <el-form-item label="SMTP 用户名">
             <el-input v-model="transport.smtpUser" autocomplete="username" placeholder="可选" />
@@ -236,8 +242,8 @@ onMounted(() => {
           <el-form-item label="发件人名称" prop="fromName">
             <el-input v-model="transport.fromName" placeholder="Admin X" />
           </el-form-item>
-        </div>
-      </el-form>
+        </el-form>
+      </section>
     </el-card>
   </div>
 </template>
@@ -256,14 +262,6 @@ onMounted(() => {
   margin-bottom: 26px;
 }
 
-.page-kicker {
-  margin: 0 0 8px;
-  color: var(--ax-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-}
-
 .page-heading h1 {
   margin: 0;
   color: var(--ax-heading);
@@ -278,28 +276,11 @@ onMounted(() => {
   font-size: 12px;
 }
 
-.responsibility-card,
 .config-card {
   margin-bottom: 16px;
 }
 
-.responsibility-card :deep(.el-card__body) {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.responsibility-card__item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--ax-content);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.card-heading,
-.card-actions {
+.card-heading {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -309,52 +290,135 @@ onMounted(() => {
   justify-content: space-between;
 }
 
-.card-heading strong,
-.card-heading span {
+.card-heading__copy {
+  min-width: 0;
+}
+
+.card-heading__copy strong,
+.card-heading__copy span {
   display: block;
 }
 
-.card-heading strong {
+.card-heading__copy strong {
   color: var(--ax-heading);
   font-size: 14px;
 }
 
-.card-heading span {
+.card-heading__copy span {
   margin-top: 5px;
   color: var(--ax-muted);
   font-size: 11px;
 }
 
-.config-form {
-  padding-top: 2px;
+.system-config-section {
+  padding: 2px 0 4px;
 }
 
-.config-form__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 22px;
+.system-config-section__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
-.config-form__grid :deep(.el-input-number) {
+.system-config-section__copy {
+  min-width: 0;
+}
+
+.system-config-section__copy strong {
+  color: var(--ax-heading);
+  font-size: 15px;
+}
+
+.system-config-section__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.config-status-tag {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  height: 26px;
+  padding: 0 10px;
+  line-height: 1;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.config-status-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
+  text-align: center;
+}
+
+.config-form {
+  max-width: 720px;
+  padding-top: 0;
+}
+
+.config-form :deep(.el-form-item) {
+  margin-bottom: 22px;
+}
+
+.config-form :deep(.el-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.config-form__hint {
+  color: var(--ax-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.config-form__item--port :deep(.el-form-item__content),
+.config-form__item--secure :deep(.el-form-item__content) {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.config-form__item--port :deep(.el-input-number) {
+  width: 160px;
+  max-width: 100%;
+}
+
+.config-form__item--secure :deep(.el-switch) {
+  height: 32px;
 }
 
 @media (max-width: 800px) {
   .page-heading,
   .card-heading,
-  .card-actions {
+  .system-config-section__heading {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .card-actions {
+  .system-config-section__actions {
     align-items: stretch;
     width: 100%;
   }
 
-  .responsibility-card :deep(.el-card__body),
-  .config-form__grid {
-    grid-template-columns: 1fr;
+  .system-config-section__actions :deep(.el-button) {
+    width: 100%;
+    margin: 0;
+  }
+
+  .config-status-tag {
+    align-self: flex-start;
+  }
+
+  .config-form {
+    max-width: none;
   }
 }
 </style>

@@ -1,7 +1,6 @@
 import {
   IsBoolean,
   IsEmail,
-  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -18,6 +17,16 @@ import type {
 } from "@admin-x/shared";
 
 export class LoginDto implements LoginRequest {
+  @IsNotEmpty({ message: "图形验证码标识不能为空" })
+  @IsString({ message: "图形验证码标识必须是字符串" })
+  @MaxLength(64, { message: "图形验证码标识不正确" })
+  captchaId!: string;
+
+  @IsNotEmpty({ message: "图形验证码不能为空" })
+  @IsString({ message: "图形验证码必须是字符串" })
+  @Matches(/^[A-Za-z0-9]{4}$/u, { message: "请输入 4 位图形验证码" })
+  captchaCode!: string;
+
   @IsNotEmpty({ message: "用户名不能为空" })
   @IsString({ message: "用户名必须是字符串" })
   @MaxLength(64, { message: "用户名不能超过 64 个字符" })
@@ -30,16 +39,22 @@ export class LoginDto implements LoginRequest {
   password!: string;
 
   @IsOptional()
-  @IsString({ message: "MFA 验证码必须是字符串" })
-  @Matches(/^\d{6}$/, { message: "MFA 验证码应为 6 位数字" })
+  @IsString({ message: "登录验证码必须是字符串" })
+  @Matches(/^\d{6}$/, { message: "登录验证码应为 6 位数字" })
   mfaCode?: string;
-
-  @IsEnum(["totp", "email"], { message: "MFA 验证方式不正确" })
-  @IsOptional()
-  mfaMethod?: LoginRequest["mfaMethod"];
 }
 
 export class EmailMfaCodeRequestDto {
+  @IsNotEmpty({ message: "图形验证码标识不能为空" })
+  @IsString({ message: "图形验证码标识必须是字符串" })
+  @MaxLength(64, { message: "图形验证码标识不正确" })
+  captchaId!: string;
+
+  @IsNotEmpty({ message: "图形验证码不能为空" })
+  @IsString({ message: "图形验证码必须是字符串" })
+  @Matches(/^[A-Za-z0-9]{4}$/u, { message: "请输入 4 位图形验证码" })
+  captchaCode!: string;
+
   @IsNotEmpty({ message: "用户名不能为空" })
   @IsString({ message: "用户名必须是字符串" })
   @MaxLength(64, { message: "用户名不能超过 64 个字符" })
@@ -94,27 +109,6 @@ export class SetupAdminDto implements SetupAdminRequest {
 
   @IsBoolean({ message: "个人信息保护告知确认值不正确" })
   privacyNoticeAccepted!: boolean;
-}
-
-export class MfaSetupDto {
-  @IsNotEmpty({ message: "当前密码不能为空" })
-  @IsString({ message: "当前密码必须是字符串" })
-  @MaxLength(128, { message: "当前密码不能超过 128 个字符" })
-  currentPassword!: string;
-}
-
-export class MfaCodeDto {
-  @IsNotEmpty({ message: "MFA 验证码不能为空" })
-  @IsString({ message: "MFA 验证码必须是字符串" })
-  @Matches(/^\d{6}$/, { message: "MFA 验证码应为 6 位数字" })
-  code!: string;
-}
-
-export class MfaDisableDto extends MfaCodeDto {
-  @IsNotEmpty({ message: "当前密码不能为空" })
-  @IsString({ message: "当前密码必须是字符串" })
-  @MaxLength(128, { message: "当前密码不能超过 128 个字符" })
-  currentPassword!: string;
 }
 
 export class ReauthenticationDto implements ReauthenticationRequest {

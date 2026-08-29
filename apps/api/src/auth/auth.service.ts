@@ -18,8 +18,6 @@ import type {
   LoginRequest,
   LoginResponse,
   MfaPublicConfig,
-  MfaSetupResponse,
-  MfaStatus,
   PasswordStatus,
   ReauthenticationResponse,
   SetupAdminRequest,
@@ -28,7 +26,6 @@ import type {
 
 import { DatabaseService } from "../database/database.service.js";
 import type { AuditContext } from "../database/database.service.js";
-import { generateMfaSecret, createMfaOtpAuthUrl, verifyMfaCode } from "./mfa.js";
 import { EmailMfaService } from "./email-mfa.service.js";
 import { verifyPassword } from "./password.js";
 import { issueReauthenticationToken, REAUTHENTICATION_EXPIRES_IN } from "./reauth.js";
@@ -67,39 +64,13 @@ export class AuthService {
       context,
     );
     const emailEnabled = this.database.getEmailMfaConfig().enabled;
-    const mfaMethod =
-      input.mfaMethod ??
-      (credentials.user.mfaEnabled ? "totp" : emailEnabled ? "email" : undefined);
     let mfaSatisfied = false;
 
-    if (mfaMethod === "email") {
-      if (!emailEnabled) {
-        this.failLogin(
-          credentials,
-          "邮箱 MFA 未启用",
-          context,
-          policy.loginFailureLimit,
-          policy.lockoutMinutes,
-        );
-      }
+    if (emailEnabled) {
       if (!this.emailMfaService.verifyCode(credentials.user.id, input.mfaCode ?? "")) {
         this.failLogin(
           credentials,
-          "邮箱 MFA 验证码错误",
-          context,
-          policy.loginFailureLimit,
-          policy.lockoutMinutes,
-        );
-      }
-      mfaSatisfied = true;
-    } else if (mfaMethod === "totp" || credentials.user.mfaEnabled) {
-      if (
-        !credentials.user.mfaEnabled ||
-        !verifyMfaCode(this.usersService.getMfaSecret(credentials.user.id), input.mfaCode ?? "")
-      ) {
-        this.failLogin(
-          credentials,
-          "MFA 验证码错误",
+          "邮箱验证码错误",
           context,
           policy.loginFailureLimit,
           policy.lockoutMinutes,
@@ -115,10 +86,10 @@ export class AuthService {
     ) {
       this.usersService.recordLoginFailure(
         credentials.user.username,
-        "管理员账号未完成 MFA",
+        "管理员账号未完成邮箱验证",
         context,
       );
-      throw new ForbiddenException("管理员账号必须先完成 MFA 验证后才能登录");
+      throw new ForbiddenException("管理员账号必须先完成邮箱验证后才能登录");
     }
 
     const authenticatedUser = this.usersService.findAuthenticatedUser(credentials.user.id);
@@ -141,7 +112,7 @@ export class AuthService {
 
   requestEmailMfaCode(username: string, password: string, context?: AuditContext) {
     if (!this.database.getEmailMfaConfig().enabled) {
-      throw new UnauthorizedException("邮箱 MFA 当前未启用");
+      throw new UnauthorizedException("邮箱验证当前未启用");
     }
     const { credentials } = this.authenticatePrimaryCredentials(username, password, context);
     return this.emailMfaService.issueCode(credentials.user, context);
@@ -212,7 +183,7 @@ export class AuthService {
         isAdministrator(authenticatedUser.user.role) &&
         payload.mfaVerified !== true
       ) {
-        throw new Error("MFA is required");
+        throw new Error("需要完成邮箱验证");
       }
       return authenticatedUser.user;
     } catch {
@@ -300,50 +271,6 @@ export class AuthService {
       expiresIn: REAUTHENTICATION_EXPIRES_IN,
       token: issueReauthenticationToken(authenticated.user, authenticated.sessionVersion),
     };
-  }
-
-  getMfaStatus(userId: string): MfaStatus {
-    return this.usersService.getMfaStatus(userId);
-  }
-
-  setupMfa(userId: string, currentPassword: string, context?: AuditContext): MfaSetupResponse {
-    if (!this.usersService.verifyCurrentPassword(userId, currentPassword)) {
-      throw new UnauthorizedException("当前密码不正确");
-    }
-    const user = this.usersService.findAuthenticatedUser(userId)?.user;
-    if (!user) {
-      throw new UnauthorizedException("登录状态已失效，请重新登录");
-    }
-    const secret = generateMfaSecret();
-    this.usersService.saveMfaSecret(userId, secret, context);
-    return { otpauthUrl: createMfaOtpAuthUrl(secret, user.username), secret };
-  }
-
-  enableMfa(userId: string, code: string, context?: AuditContext): MfaStatus {
-    const secret = this.usersService.getMfaSecret(userId);
-    if (!secret || !verifyMfaCode(secret, code)) {
-      throw new UnauthorizedException("MFA 验证码不正确");
-    }
-    this.usersService.setMfaEnabled(userId, true, context);
-    return this.usersService.getMfaStatus(userId);
-  }
-
-  disableMfa(
-    userId: string,
-    currentPassword: string,
-    code: string,
-    context?: AuditContext,
-  ): MfaStatus {
-    if (!this.usersService.verifyCurrentPassword(userId, currentPassword)) {
-      throw new UnauthorizedException("当前密码不正确");
-    }
-    const secret = this.usersService.getMfaSecret(userId);
-    if (!secret || !verifyMfaCode(secret, code)) {
-      throw new UnauthorizedException("MFA 验证码不正确");
-    }
-    this.usersService.setMfaEnabled(userId, false, context);
-    this.usersService.saveMfaSecret(userId, "", context);
-    return this.usersService.getMfaStatus(userId);
   }
 
   private authenticatePrimaryCredentials(

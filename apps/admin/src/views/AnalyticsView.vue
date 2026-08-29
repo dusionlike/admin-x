@@ -124,7 +124,6 @@ onMounted(() => void loadAnalytics());
   <div class="analytics-page">
     <div class="page-heading analytics-heading">
       <div>
-        <p class="page-kicker">ANALYTICS</p>
         <h1>数据分析</h1>
         <p class="page-description">从访问趋势、账号结构和状态分布观察管理中心运行情况。</p>
       </div>
@@ -297,14 +296,6 @@ onMounted(() => void loadAnalytics());
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 26px;
-}
-
-.page-kicker {
-  margin: 0 0 8px;
-  color: var(--ax-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
 }
 
 .page-heading h1 {

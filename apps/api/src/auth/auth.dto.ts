@@ -17,15 +17,15 @@ import type {
 } from "@admin-x/shared";
 
 export class LoginDto implements LoginRequest {
-  @IsNotEmpty({ message: "图形验证码标识不能为空" })
+  @IsOptional()
   @IsString({ message: "图形验证码标识必须是字符串" })
   @MaxLength(64, { message: "图形验证码标识不正确" })
-  captchaId!: string;
+  captchaId?: string;
 
-  @IsNotEmpty({ message: "图形验证码不能为空" })
+  @IsOptional()
   @IsString({ message: "图形验证码必须是字符串" })
   @Matches(/^[A-Za-z0-9]{4}$/u, { message: "请输入 4 位图形验证码" })
-  captchaCode!: string;
+  captchaCode?: string;
 
   @IsNotEmpty({ message: "用户名不能为空" })
   @IsString({ message: "用户名必须是字符串" })
@@ -45,15 +45,15 @@ export class LoginDto implements LoginRequest {
 }
 
 export class EmailMfaCodeRequestDto {
-  @IsNotEmpty({ message: "图形验证码标识不能为空" })
+  @IsOptional()
   @IsString({ message: "图形验证码标识必须是字符串" })
   @MaxLength(64, { message: "图形验证码标识不正确" })
-  captchaId!: string;
+  captchaId?: string;
 
-  @IsNotEmpty({ message: "图形验证码不能为空" })
+  @IsOptional()
   @IsString({ message: "图形验证码必须是字符串" })
   @Matches(/^[A-Za-z0-9]{4}$/u, { message: "请输入 4 位图形验证码" })
-  captchaCode!: string;
+  captchaCode?: string;
 
   @IsNotEmpty({ message: "用户名不能为空" })
   @IsString({ message: "用户名必须是字符串" })

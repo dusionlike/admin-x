@@ -48,8 +48,8 @@ export const authApi = {
     });
   },
   requestEmailCode(payload: {
-    captchaCode: string;
-    captchaId: string;
+    captchaCode?: string;
+    captchaId?: string;
     username: string;
     password: string;
   }) {

@@ -32,6 +32,7 @@ const emailCodeCountdown = ref(0);
 const emailVerificationVisible = ref(false);
 const captchaImage = ref("");
 const captchaLoading = ref(true);
+const captchaRequired = ref(true);
 const expiredPasswordVisible = ref(false);
 const expiredPasswordLoading = ref(false);
 const privacyNoticeVisible = ref(false);
@@ -73,8 +74,22 @@ const loginRules: FormRules<LoginRequest> = {
     { min: 6, message: "密码长度不能少于 6 位", trigger: "blur" },
   ],
   captchaCode: [
-    { message: "请输入图形验证码", required: true, trigger: "blur" },
-    { message: "请输入 4 位图形验证码", pattern: /^[A-Za-z0-9]{4}$/u, trigger: "blur" },
+    {
+      trigger: "blur",
+      validator: (_rule, value, callback) => {
+        if (!captchaRequired.value) {
+          callback();
+          return;
+        }
+        if (!value) {
+          callback(new Error("请输入图形验证码"));
+          return;
+        }
+        callback(
+          /^[A-Za-z0-9]{4}$/u.test(String(value)) ? undefined : new Error("请输入 4 位图形验证码"),
+        );
+      },
+    },
   ],
   mfaCode: [
     {
@@ -204,10 +219,12 @@ async function refreshCaptcha() {
   captchaLoading.value = true;
   try {
     const result = await authApi.loginCaptcha();
-    captchaImage.value = result.image;
+    captchaRequired.value = result.required !== false;
+    captchaImage.value = captchaRequired.value ? result.image : "";
     form.captchaCode = "";
-    form.captchaId = result.id;
+    form.captchaId = captchaRequired.value ? result.id : "";
   } catch (error: unknown) {
+    captchaRequired.value = true;
     captchaImage.value = "";
     form.captchaId = "";
     ElMessage.error(getErrorMessage(error, "图形验证码加载失败，请稍后重试"));
@@ -249,7 +266,7 @@ async function handleLogin() {
   if (emailMfaConfigLoading.value || captchaLoading.value) {
     return;
   }
-  if (!form.captchaId) {
+  if (captchaRequired.value && !form.captchaId) {
     await refreshCaptcha();
     return;
   }
@@ -270,6 +287,8 @@ async function handleLogin() {
   try {
     const result = await authStore.login({
       ...form,
+      captchaCode: captchaRequired.value ? form.captchaCode : undefined,
+      captchaId: captchaRequired.value ? form.captchaId : undefined,
       mfaCode: form.mfaCode || undefined,
     });
     clearLoginSecrets();
@@ -338,8 +357,8 @@ async function requestEmailCode() {
   emailCodeLoading.value = true;
   try {
     const result = await authApi.requestEmailCode({
-      captchaCode: form.captchaCode ?? "",
-      captchaId: form.captchaId ?? "",
+      captchaCode: captchaRequired.value ? form.captchaCode : undefined,
+      captchaId: captchaRequired.value ? form.captchaId : undefined,
       password: form.password,
       username: form.username,
     });
@@ -587,7 +606,7 @@ onBeforeUnmount(() => {
               ></template>
             </el-input>
           </el-form-item>
-          <el-form-item label="图形验证码" prop="captchaCode">
+          <el-form-item v-if="captchaRequired" label="图形验证码" prop="captchaCode">
             <div class="login-captcha">
               <el-input
                 v-model="form.captchaCode"

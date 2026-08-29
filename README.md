@@ -53,6 +53,8 @@ vp run dev
 
 如果登录按钮提示请求失败，请确认前端和 API 都已启动，并检查浏览器访问的是 `http://localhost:5173`。开发环境下前端会把 `/api` 请求代理到 `http://localhost:3000`；如果设置了 `VITE_API_BASE_URL` 为空字符串，前端仍会回退到 `/api`。
 
+本地联调或 E2E 测试可在启动 API 前设置 `CAPTCHA_DISABLED=true`，登录页会自动隐藏图形验证码，登录接口也会接受不带验证码的请求。该开关仅在非生产环境生效；`NODE_ENV=production` 时始终保留验证码校验。也可以将配置写入根目录 `.env`，具体变量见 `.env.example`。
+
 ## 一体化部署
 
 执行下面的命令会生成一个类似 Nuxt `.output` 的前后端一体化部署包：

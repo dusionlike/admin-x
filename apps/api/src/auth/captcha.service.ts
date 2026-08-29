@@ -12,6 +12,7 @@ const CAPTCHA_MAX_ATTEMPTS = 5;
 const CAPTCHA_REQUEST_WINDOW_MS = 60 * 1_000;
 const CAPTCHA_REQUEST_LIMIT = 30;
 const CAPTCHA_COLORS = ["#4f46a5", "#0f766e", "#b45309", "#be123c"] as const;
+const CAPTCHA_DISABLED_VALUES = new Set(["1", "true", "yes", "on"]);
 
 interface CaptchaChallenge {
   attempts: number;
@@ -23,10 +24,20 @@ interface CaptchaChallenge {
 
 @Injectable()
 export class CaptchaService {
+  private readonly disabled = isCaptchaDisabled();
   private readonly challenges = new Map<string, CaptchaChallenge>();
   private readonly requestsByIp = new Map<string, number[]>();
 
   issue(context?: AuditContext): LoginCaptchaResponse {
+    if (this.disabled) {
+      return {
+        expiresIn: 0,
+        id: "",
+        image: "",
+        required: false,
+      };
+    }
+
     this.cleanup();
     const requestIp = context?.ipAddress?.trim() || undefined;
     this.assertIssueRateLimit(requestIp ?? "unknown");
@@ -46,6 +57,7 @@ export class CaptchaService {
       expiresIn: CAPTCHA_EXPIRES_MS / 1_000,
       id,
       image: createCaptchaImage(code),
+      required: true,
     };
   }
 
@@ -66,6 +78,10 @@ export class CaptchaService {
     context?: AuditContext,
     consume = true,
   ): boolean {
+    if (this.disabled) {
+      return true;
+    }
+
     this.cleanup();
     if (!id || !code) {
       return false;
@@ -137,6 +153,15 @@ export class CaptchaService {
       this.challenges.delete(id);
     }
   }
+}
+
+export function isCaptchaDisabled(
+  environment: Record<string, string | undefined> = process.env,
+): boolean {
+  if (environment.NODE_ENV?.trim().toLowerCase() === "production") {
+    return false;
+  }
+  return CAPTCHA_DISABLED_VALUES.has(environment.CAPTCHA_DISABLED?.trim().toLowerCase() ?? "");
 }
 
 function createCaptchaCode(): string {

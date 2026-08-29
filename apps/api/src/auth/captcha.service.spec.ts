@@ -1,6 +1,13 @@
 import { expect, test } from "vite-plus/test";
 
-import { CaptchaService } from "./captcha.service.js";
+import { CaptchaService, isCaptchaDisabled } from "./captcha.service.js";
+
+test("only disables captcha for an explicit non-production environment", () => {
+  expect(isCaptchaDisabled({ CAPTCHA_DISABLED: "true", NODE_ENV: "test" })).toBe(true);
+  expect(isCaptchaDisabled({ CAPTCHA_DISABLED: "ON", NODE_ENV: "development" })).toBe(true);
+  expect(isCaptchaDisabled({ CAPTCHA_DISABLED: "false", NODE_ENV: "test" })).toBe(false);
+  expect(isCaptchaDisabled({ CAPTCHA_DISABLED: "true", NODE_ENV: "production" })).toBe(false);
+});
 
 test("issues a readable captcha and consumes it after a successful verification", () => {
   const service = new CaptchaService();

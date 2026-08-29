@@ -391,6 +391,7 @@ export interface LoginCaptchaResponse {
   id: string;
   image: string;
   expiresIn: number;
+  required: boolean;
 }
 
 export interface SetupAdminRequest {

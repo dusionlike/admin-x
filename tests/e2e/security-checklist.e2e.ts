@@ -30,6 +30,7 @@ before(async () => {
     BACKUP_ENCRYPTION_KEY: "e2e-dedicated-backup-key",
     BACKUP_LOCAL_PATH: join(dataDir, "local-backups"),
     BACKUP_REMOTE_PATH: join(dataDir, "remote-backups"),
+    CAPTCHA_DISABLED: "true",
     DATABASE_PATH: join(dataDir, "admin-x.sqlite"),
     FRONTEND_ORIGIN: `http://127.0.0.1:${port}`,
     HA_ENABLED: "true",
@@ -81,6 +82,9 @@ test("等级保护设计检查清单的 18 项控制均可通过端到端流程�
   assert.equal((health.body.data as JsonObject).status, "ok");
   assert.match(health.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/u);
   assert.match(health.headers.get("strict-transport-security") ?? "", /max-age=31536000/u);
+  const captcha = await request("/auth/captcha");
+  assert.equal(captcha.status, 200, JSON.stringify(captcha.body));
+  assert.equal((captcha.body.data as JsonObject).required, false);
   const ready = await request("/ready");
   assert.equal(ready.status, 200);
   assert.equal((ready.body.data as JsonObject).highAvailability, true);
@@ -453,10 +457,7 @@ interface RequestOptions {
 }
 
 async function request(path: string, options: RequestOptions = {}): Promise<ApiResult> {
-  const requestBody =
-    options.body && (path === "/auth/login" || path === "/auth/mfa/email/request")
-      ? await addCaptcha(options.body)
-      : options.body;
+  const requestBody = options.body;
   const headers = new Headers({
     Accept: "application/json",
     Origin: options.origin ?? appOrigin,
@@ -499,25 +500,6 @@ async function request(path: string, options: RequestOptions = {}): Promise<ApiR
     }
   }
   return { body, headers: response.headers, status: response.status };
-}
-
-async function addCaptcha(body: JsonObject): Promise<JsonObject> {
-  const captcha = await request("/auth/captcha");
-  assert.equal(captcha.status, 200, JSON.stringify(captcha.body));
-  const captchaData = captcha.body.data as JsonObject;
-  const image = String(captchaData.image ?? "");
-  const encodedImage = image.split(",", 2)[1] ?? "";
-  const svg = Buffer.from(encodedImage, "base64").toString("utf8");
-  const code = [...svg.matchAll(/<text[^>]*>([A-Z0-9])<\/text>/gu)]
-    .map((match) => match[1])
-    .join("");
-  assert.equal(typeof captchaData.id, "string", JSON.stringify(captcha.body));
-  assert.match(code, /^[A-Z0-9]{4}$/u);
-  return {
-    ...body,
-    captchaCode: code,
-    captchaId: String(captchaData.id),
-  };
 }
 
 async function waitForServer() {

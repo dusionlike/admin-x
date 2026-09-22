@@ -8,6 +8,7 @@ catalogMode: prefer
 catalog:
   "@types/node": ^24
   echarts: ^6.1.0
+  ogl: ^1.0.11
   typescript: ^7.0.2
   vite: npm:@voidzero-dev/vite-plus-core@0.2.8
   vite-plus: 0.2.8

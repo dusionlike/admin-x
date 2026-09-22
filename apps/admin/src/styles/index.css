@@ -13,6 +13,11 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  --ax-login-backdrop: #07091c;
+  --ax-login-shade: rgb(4 5 18 / 65%);
+  --ax-login-heading: #f5f6ff;
+  --ax-login-copy: #b9c3e0;
+  --ax-login-accent: #b6a6ff;
   --ax-primary: #6755e8;
   --ax-primary-dark: #4d3bd1;
   --ax-primary-soft: #f0effd;

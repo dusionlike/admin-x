@@ -129,7 +129,20 @@ export const useThemeStore = defineStore("theme", () => {
     document.documentElement.style.colorScheme = isDark.value ? "dark" : "light";
   }
 
+  // Login uses a dark-only visual treatment without changing the user's
+  // persisted preference. The actual theme is restored when the route leaves.
+  function enterDarkPreview() {
+    document.documentElement.classList.add("dark");
+    document.documentElement.style.colorScheme = "dark";
+  }
+
+  function exitPreview() {
+    applyTheme();
+  }
+
   return {
+    enterDarkPreview,
+    exitPreview,
     isDark,
     mode,
     restore,
